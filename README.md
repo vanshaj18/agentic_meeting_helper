@@ -324,6 +324,7 @@ if (result.success) {
 7. **Credit Persistence**: Store credit usage in database for persistence
 
 ## Contributing
+-- cursor as helper --
 
 1. Fork the repository
 2. Create a feature branch
