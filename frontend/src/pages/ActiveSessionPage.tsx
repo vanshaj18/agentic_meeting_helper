@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Video, LogOut, MessageSquare, Send, Mic, MicOff, Square, Globe } from 'lucide-react';
+import { Video, LogOut, MessageSquare, Send, Mic, MicOff, Square, Globe, Database, Plus, ChevronDown, Loader2 } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import { ChatMessage, Session } from '@shared/types';
 import { meetingService } from '../services/meetingService';
 import { llmAPI, sessionsAPI } from '../services/api';
+import { logger } from '../utils/logger';
 
 interface ActiveSessionPageProps {
   onNavigate: (page: string) => void;
@@ -17,20 +18,40 @@ const ActiveSessionPage: React.FC<ActiveSessionPageProps> = ({ onNavigate }) => 
   const [transcriptHistory, setTranscriptHistory] = useState<string[]>([]);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [useWebSearch, setUseWebSearch] = useState(false);
+  const [useRAGSearch, setUseRAGSearch] = useState(false);
+  const [showSearchDropdown, setShowSearchDropdown] = useState(false);
+  const [isExiting, setIsExiting] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
-  const { chatMessages, setChatMessages, selectedSession } = useAppContext();
+  const searchDropdownRef = useRef<HTMLDivElement>(null);
+  const { chatMessages, setChatMessages, selectedSession, user } = useAppContext();
 
   useEffect(() => {
     if (selectedSession) {
+      logger.activeSession('Active session page loaded', { sessionId: selectedSession.id });
       meetingService.initializeBroadcastChannel(selectedSession.id);
     }
 
     return () => {
+      logger.activeSession('Cleaning up active session');
       meetingService.cleanup();
     };
   }, [selectedSession]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (searchDropdownRef.current && !searchDropdownRef.current.contains(event.target as Node)) {
+        setShowSearchDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   useEffect(() => {
     if (stream && videoRef.current) {
@@ -118,6 +139,9 @@ const ActiveSessionPage: React.FC<ActiveSessionPageProps> = ({ onNavigate }) => 
   const handleSendMessage = async () => {
     if (!chatInput.trim() || !selectedSession) return;
 
+    // Check if this is the first message BEFORE adding user message
+    const isFirstMessage = chatMessages.length === 0;
+
     const userMessage: ChatMessage = {
       text: chatInput,
       isUser: true,
@@ -126,16 +150,71 @@ const ActiveSessionPage: React.FC<ActiveSessionPageProps> = ({ onNavigate }) => 
     setChatMessages([...chatMessages, userMessage]);
     const question = chatInput;
     const shouldUseWebSearch = useWebSearch;
+    const shouldUseRAGSearch = useRAGSearch;
     setChatInput('');
-    setUseWebSearch(false); // Reset flag after sending
+    // Keep selection persistent - don't reset flags
+    setShowSearchDropdown(false);
+
+    logger.aiAnswer('Sending message to AI', { 
+      sessionId: selectedSession.id, 
+      question: question.substring(0, 100),
+      useWebSearch: shouldUseWebSearch,
+      useRAGSearch: shouldUseRAGSearch,
+      agentId: selectedSession.agentIds?.[0],
+      isFirstMessage,
+    });
 
     try {
+      // If RAG search is enabled, search IndexedDB for small files
+      let indexedDBChunks: Array<{
+        id: string;
+        text: string;
+        score?: number;
+        metadata?: Record<string, any>;
+      }> = [];
+
+      if (shouldUseRAGSearch && selectedSession.documentIds && selectedSession.documentIds.length > 0) {
+        try {
+          const { searchChunksClient } = await import('../services/clientRAGService');
+          const chunks = await searchChunksClient(
+            question,
+            'default-user', // TODO: Get from auth
+            undefined, // Search across all documents in session
+            5
+          );
+
+          indexedDBChunks = chunks.map(chunk => ({
+            id: chunk.id,
+            text: chunk.text,
+            score: chunk.score,
+            metadata: chunk.metadata,
+          }));
+
+          if (indexedDBChunks.length > 0) {
+            logger.aiAnswer('Found IndexedDB chunks for RAG search', {
+              sessionId: selectedSession.id,
+              chunkCount: indexedDBChunks.length,
+            });
+          }
+        } catch (error) {
+          logger.aiAnswerError('IndexedDB search failed', error as Error, {
+            sessionId: selectedSession.id,
+          });
+          // Continue with backend RAG search even if IndexedDB fails
+        }
+      }
+
       // Use session context (agents, documents) for AI response
+      // Pass IndexedDB chunks to backend for merging with Pinecone results
+      // Only pass username for greeting on the first message
       const result = await llmAPI.askQuestion(
         selectedSession.id,
         question,
         selectedSession.agentIds?.[0], // Use first agent if available
-        shouldUseWebSearch
+        shouldUseWebSearch,
+        shouldUseRAGSearch,
+        indexedDBChunks.length > 0 ? indexedDBChunks : undefined,
+        isFirstMessage ? user.name : undefined // Only pass username for first message greeting
       );
 
       const aiResponse: ChatMessage = {
@@ -144,8 +223,12 @@ const ActiveSessionPage: React.FC<ActiveSessionPageProps> = ({ onNavigate }) => 
         time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
       };
       setChatMessages((prev) => [...prev, aiResponse]);
+      logger.aiAnswer('AI response received', { 
+        sessionId: selectedSession.id, 
+        answerLength: result.answer.length 
+      });
     } catch (error) {
-      console.error('Failed to get AI response:', error);
+      logger.aiAnswerError('Failed to get AI response', error as Error, { sessionId: selectedSession.id });
       const errorResponse: ChatMessage = {
         text: 'Sorry, I encountered an error. Please try again.',
         isUser: false,
@@ -156,37 +239,102 @@ const ActiveSessionPage: React.FC<ActiveSessionPageProps> = ({ onNavigate }) => 
   };
 
   const handleExitSession = async () => {
-    // Save transcript history to session before exiting
-    if (selectedSession && (transcriptHistory.length > 0 || currentTranscript.trim())) {
-      try {
-        const messages = [...transcriptHistory];
-        // Add current interim transcript if exists
-        if (currentTranscript.trim()) {
-          messages.push(currentTranscript.trim());
+    if (isExiting) return; // Prevent double-click
+    
+    setIsExiting(true);
+    
+    try {
+      // Save transcript history to session before exiting
+      let sessionToSummarize: Session | null = null;
+      if (selectedSession && (transcriptHistory.length > 0 || currentTranscript.trim())) {
+        try {
+          const messages = [...transcriptHistory];
+          // Add current interim transcript if exists
+          if (currentTranscript.trim()) {
+            messages.push(currentTranscript.trim());
+          }
+          
+          const transcriptMessages = messages.map((text) => ({
+            sender: 'Meeting Participant',
+            message: text,
+            time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+            isUser: true,
+          }));
+          
+          await sessionsAPI.addTranscript(selectedSession.id, transcriptMessages);
+          sessionToSummarize = selectedSession;
+        } catch (error) {
+          console.error('Failed to save transcript:', error);
         }
-        
-        const transcriptMessages = messages.map((text) => ({
-          sender: 'Meeting Participant',
-          message: text,
-          time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-          isUser: true,
-        }));
-        
-        await sessionsAPI.addTranscript(selectedSession.id, transcriptMessages);
-      } catch (error) {
-        console.error('Failed to save transcript:', error);
       }
-    }
 
-    meetingService.cleanup();
-    onNavigate('sessions');
-    setChatMessages([]);
-    setChatInput('');
-    setIsConnected(false);
-    setIsRecording(false);
-    setStream(null);
-    setCurrentTranscript('');
-    setTranscriptHistory([]);
+      meetingService.cleanup();
+      
+      // Generate summary in the background (don't wait for it)
+      if (sessionToSummarize) {
+        // Small delay to ensure transcript is saved, then fetch updated session
+        setTimeout(() => {
+          sessionsAPI.getById(sessionToSummarize.id)
+            .then((updatedSession) => {
+              if (updatedSession.transcript && updatedSession.transcript.length > 0 && !updatedSession.summaryData) {
+                // Generate summary asynchronously in the background
+                llmAPI.generateSummary(updatedSession.id)
+                  .then((result) => {
+                    try {
+                      const jsonData = JSON.parse(result.summary);
+                      // Store summaryData in session
+                      sessionsAPI.update(updatedSession.id, {
+                        summary: '',
+                        summaryData: jsonData
+                      }).catch((error) => {
+                        logger.aiAnswerError('Failed to save background summary', error as Error, { sessionId: updatedSession.id });
+                      });
+                      
+                      // Extract first chunk for session description
+                      const descriptionChunk = jsonData.purpose || jsonData.what_happened || '';
+                      if (descriptionChunk) {
+                        const shortDescription = descriptionChunk.substring(0, 200).trim();
+                        const lastPeriod = shortDescription.lastIndexOf('.');
+                        const finalDescription = lastPeriod > 50 
+                          ? shortDescription.substring(0, lastPeriod + 1) 
+                          : shortDescription;
+                        
+                        sessionsAPI.update(updatedSession.id, { description: finalDescription })
+                          .catch((error) => {
+                            logger.aiAnswerError('Failed to update session description', error as Error, { sessionId: updatedSession.id });
+                          });
+                      }
+                    } catch (parseError) {
+                      logger.aiAnswerError('Failed to parse background summary JSON', parseError as Error, { sessionId: updatedSession.id });
+                    }
+                  })
+                  .catch((error) => {
+                    logger.aiAnswerError('Failed to generate background summary', error as Error, { sessionId: updatedSession.id });
+                  });
+              }
+            })
+            .catch((error) => {
+              logger.aiAnswerError('Failed to fetch session for summary generation', error as Error, { sessionId: sessionToSummarize.id });
+            });
+        }, 500); // Small delay to ensure transcript is saved
+      }
+      
+      // Smooth transition to sessions page
+      setTimeout(() => {
+        onNavigate('sessions');
+        setChatMessages([]);
+        setChatInput('');
+        setIsConnected(false);
+        setIsRecording(false);
+        setStream(null);
+        setCurrentTranscript('');
+        setTranscriptHistory([]);
+        setIsExiting(false);
+      }, 300);
+    } catch (error) {
+      console.error('Failed to exit session:', error);
+      setIsExiting(false);
+    }
   };
 
   return (
@@ -202,10 +350,17 @@ const ActiveSessionPage: React.FC<ActiveSessionPageProps> = ({ onNavigate }) => 
           </div>
           <button
             onClick={handleExitSession}
-            className="flex items-center gap-1 md:gap-2 px-3 md:px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm md:text-base whitespace-nowrap flex-shrink-0"
+            disabled={isExiting}
+            className={`flex items-center gap-1 md:gap-2 px-3 md:px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all duration-200 text-sm md:text-base whitespace-nowrap flex-shrink-0 ${
+              isExiting ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
           >
-            <LogOut className="w-3 md:w-4 h-3 md:h-4" />
-            <span className="hidden sm:inline">Exit</span>
+            {isExiting ? (
+              <Loader2 className="w-3 md:w-4 h-3 md:h-4 animate-spin" />
+            ) : (
+              <LogOut className="w-3 md:w-4 h-3 md:h-4" />
+            )}
+            <span className="hidden sm:inline">{isExiting ? 'Exiting...' : 'Exit'}</span>
           </button>
         </div>
 
@@ -223,7 +378,7 @@ const ActiveSessionPage: React.FC<ActiveSessionPageProps> = ({ onNavigate }) => 
                 />
                 {isRecording && (
                   <div className="absolute top-4 left-4 bg-red-600 text-white px-3 py-1.5 rounded-full flex items-center gap-2 text-xs font-medium z-10">
-                    <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
+                    <div className="w-2 h-2 bg-ivory rounded-full animate-pulse border border-red-600"></div>
                     Recording
                   </div>
                 )}
@@ -292,7 +447,7 @@ const ActiveSessionPage: React.FC<ActiveSessionPageProps> = ({ onNavigate }) => 
                 </p>
                 <button
                   onClick={handleConnectMeeting}
-                  className="px-4 md:px-6 py-2 md:py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 mx-auto text-sm md:text-base"
+                  className="px-4 md:px-6 py-2 md:py-3 bg-black text-white rounded-lg hover:bg-gray-900 transition-colors flex items-center gap-2 mx-auto text-sm md:text-base border-2 border-red-600"
                 >
                   <Video className="w-4 md:w-5 h-4 md:h-5" />
                   Connect to Meeting
@@ -318,13 +473,13 @@ const ActiveSessionPage: React.FC<ActiveSessionPageProps> = ({ onNavigate }) => 
       </div>
 
       {/* Right Column - Chat */}
-      <div className="w-full lg:w-96 bg-white flex flex-col border-l border-gray-200 max-h-[50vh] lg:max-h-full">
-        <div className="p-3 md:p-4 border-b border-gray-200 flex-shrink-0">
+      <div className="w-full lg:w-96 bg-ivory flex flex-col border-l-2 border-red-600 max-h-[50vh] lg:max-h-full">
+        <div className="p-3 md:p-4 border-b-2 border-red-600 flex-shrink-0">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-semibold text-gray-900 text-sm md:text-base">AI Answer</h3>
               <p className="text-xs md:text-sm text-gray-600 mt-1">
-                Ask JarWiz for any session related query, answer, assistance...
+                Ask Qbot for any session related query, answer, assistance...
               </p>
             </div>
             {isRecording && (
@@ -350,14 +505,14 @@ const ActiveSessionPage: React.FC<ActiveSessionPageProps> = ({ onNavigate }) => 
               <div key={idx} className={`flex ${msg.isUser ? 'justify-end' : 'justify-start'}`}>
                 <div
                   className={`max-w-[85%] md:max-w-[80%] rounded-lg p-2 md:p-3 ${
-                    msg.isUser ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-900'
+                    msg.isUser ? 'bg-black text-white border-2 border-red-600' : 'bg-ivory-dark text-gray-900 border-2 border-gray-300'
                   }`}
                 >
                   <div className="mb-1">
-                    <p className={`text-xs font-medium ${msg.isUser ? 'text-blue-100' : 'text-gray-600'}`}>
-                      {msg.isUser ? 'You' : 'JarWiz'}
+                    <p className={`text-xs font-medium ${msg.isUser ? 'text-gray-300' : 'text-gray-600'}`}>
+                      {msg.isUser ? 'You' : 'Qbot'}
                     </p>
-                    <p className={`text-xs ${msg.isUser ? 'text-blue-200' : 'text-gray-500'}`}>
+                    <p className={`text-xs ${msg.isUser ? 'text-gray-400' : 'text-gray-500'}`}>
                       {msg.time}
                     </p>
                   </div>
@@ -368,30 +523,69 @@ const ActiveSessionPage: React.FC<ActiveSessionPageProps> = ({ onNavigate }) => 
           )}
         </div>
 
-        <div className="p-3 md:p-4 border-t border-gray-200 flex-shrink-0">
+        <div className="p-3 md:p-4 border-t-2 border-red-600 flex-shrink-0">
           <div className="flex gap-2">
             <input
               type="text"
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-              placeholder="Ask JarWiz..."
+              placeholder="Ask Qbot..."
               className="flex-1 px-3 md:px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm md:text-base"
             />
-            <button
-              onClick={() => setUseWebSearch(!useWebSearch)}
-              className={`px-2 md:px-3 py-2 rounded-lg transition-colors flex-shrink-0 ${
-                useWebSearch 
-                  ? 'bg-blue-100 text-blue-600 hover:bg-blue-200' 
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-              title={useWebSearch ? "Web search enabled - click to disable" : "Enable web search"}
-            >
-              <Globe className="w-4 md:w-5 h-4 md:h-5" />
-            </button>
+            <div className="relative flex-shrink-0" ref={searchDropdownRef}>
+              <button
+                onClick={() => setShowSearchDropdown(!showSearchDropdown)}
+                className={`px-2 md:px-3 py-2 rounded-lg transition-colors flex items-center gap-1 ${
+                  (useWebSearch || useRAGSearch)
+                    ? 'bg-black text-white hover:bg-gray-900 border-2 border-red-600'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200 border-2 border-transparent hover:border-red-600'
+                }`}
+                title="Search options"
+              >
+                <Plus className="w-4 md:w-5 h-4 md:h-5" />
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {showSearchDropdown && (
+                <div className="absolute bottom-full right-0 mb-2 bg-ivory rounded-lg shadow-lg border-2 border-red-600 py-2 z-50 min-w-[160px]">
+                  <button
+                    onClick={() => {
+                      setUseWebSearch(!useWebSearch);
+                      setUseRAGSearch(false);
+                      setShowSearchDropdown(false);
+                    }}
+                    className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
+                      useWebSearch
+                        ? 'bg-black text-white border-2 border-red-600'
+                          : 'text-gray-700 hover:bg-ivory-dark border-2 border-transparent hover:border-red-600'
+                    }`}
+                  >
+                    <Globe className="w-4 h-4" />
+                    <span>Web Search</span>
+                    {useWebSearch && <span className="ml-auto text-xs">✓</span>}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setUseRAGSearch(!useRAGSearch);
+                      setUseWebSearch(false);
+                      setShowSearchDropdown(false);
+                    }}
+                    className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
+                      useRAGSearch
+                        ? 'bg-black text-white border-2 border-red-600'
+                          : 'text-gray-700 hover:bg-ivory-dark border-2 border-transparent hover:border-red-600'
+                    }`}
+                  >
+                    <Database className="w-4 h-4" />
+                    <span>RAG Search</span>
+                    {useRAGSearch && <span className="ml-auto text-xs">✓</span>}
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               onClick={handleSendMessage}
-              className="px-3 md:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex-shrink-0"
+              className="px-3 md:px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-900 transition-colors flex-shrink-0 border-2 border-red-600"
             >
               <Send className="w-4 md:w-5 h-4 md:h-5" />
             </button>

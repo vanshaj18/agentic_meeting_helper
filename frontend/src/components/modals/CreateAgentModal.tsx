@@ -38,23 +38,23 @@ const CreateAgentModal: React.FC<CreateAgentModalProps> = ({
 
   return (
     <div 
-      className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+      className="fixed inset-0 bg-modal-overlay flex items-center justify-center p-4 z-50"
       onClick={onClose}
     >
       <div 
-        className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl"
+        className="bg-ivory rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl border-2 border-red-600"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="p-5 md:p-6 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10">
+        <div className="p-4 md:p-5 border-b-2 border-red-600 flex items-center justify-between sticky top-0 bg-ivory z-10">
           <h2 className="text-lg md:text-xl font-semibold text-gray-900">{agent ? 'Edit Agent' : 'Create Agent'}</h2>
           <button onClick={onClose} className="p-1.5 hover:bg-gray-50 rounded-lg flex-shrink-0 transition-colors">
             <X className="w-5 h-5 text-gray-400" />
           </button>
         </div>
 
-        <div className="p-4 md:p-6 space-y-4 md:space-y-6">
+        <div className="p-4 md:p-5 space-y-3 md:space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-900 mb-2">
+            <label className="block text-sm font-medium text-gray-900 mb-1.5">
               Agent Name <span className="text-red-600">*</span>
             </label>
             <input
@@ -75,7 +75,7 @@ const CreateAgentModal: React.FC<CreateAgentModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-900 mb-2">Description</label>
+            <label className="block text-sm font-medium text-gray-900 mb-1.5">Description</label>
             <input
               type="text"
               value={formData.description}
@@ -86,7 +86,7 @@ const CreateAgentModal: React.FC<CreateAgentModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-900 mb-2">Tag</label>
+            <label className="block text-sm font-medium text-gray-900 mb-1.5">Tag</label>
             <input
               type="text"
               value={formData.tags}
@@ -97,7 +97,7 @@ const CreateAgentModal: React.FC<CreateAgentModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-900 mb-2">Agent Prompt</label>
+            <label className="block text-sm font-medium text-gray-900 mb-1.5">Agent Prompt</label>
             <textarea
               value={formData.prompt}
               onChange={(e) => setFormData({ ...formData, prompt: e.target.value })}
@@ -108,7 +108,7 @@ const CreateAgentModal: React.FC<CreateAgentModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-900 mb-2">
+            <label className="block text-sm font-medium text-gray-900 mb-1.5">
               <div className="flex items-center gap-2">
                 <Shield className="w-4 h-4" />
                 <span>Guardrails (Optional)</span>
@@ -124,16 +124,16 @@ const CreateAgentModal: React.FC<CreateAgentModalProps> = ({
           </div>
         </div>
 
-        <div className="p-5 md:p-6 border-t border-gray-100 flex flex-col sm:flex-row gap-3 sticky bottom-0 bg-white">
+        <div className="p-4 md:p-5 border-t-2 border-red-600 flex flex-col sm:flex-row gap-3 sticky bottom-0 bg-ivory">
           <button
             onClick={onClose}
-            className="w-full sm:flex-1 px-4 md:px-6 py-2.5 md:py-3 border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-colors text-sm md:text-base font-medium"
+            className="w-full sm:flex-1 px-4 md:px-6 py-2 md:py-2.5 border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-colors text-sm md:text-base font-medium"
           >
             Cancel
           </button>
           <button
             onClick={handleSubmit}
-            className="w-full sm:flex-1 px-4 md:px-6 py-2.5 md:py-3 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors font-medium text-sm md:text-base"
+            className="w-full sm:flex-1 px-4 md:px-6 py-2 md:py-2.5 bg-black text-white rounded-lg hover:bg-gray-900 transition-colors font-medium text-sm md:text-base border-2 border-red-600"
           >
             {agent ? 'Update Agent' : 'Create Agent'}
           </button>

@@ -20,7 +20,7 @@ ai_remote_work/
 │   │   ├── routes/       # API routes
 │   │   ├── services/     # Business logic
 │   │   ├── lib/          # Library modules
-│   │   │   └── rag/      # RAG ingestion pipeline
+│   │   │   └── rag/      # RAG pipeline (ingestion & retrieval)
 │   │   └── index.ts      # Server entry point
 │   ├── package.json
 │   └── tsconfig.json
@@ -194,6 +194,8 @@ All TypeScript interfaces are defined in `shared/types/index.ts` and imported by
 - OpenAI SDK (for LLM and embeddings)
 - Tavily SDK (for web search)
 - Pinecone SDK (for vector database)
+- Neo4j Driver (for graph database - AuraDB)
+- Cohere SDK (for reranking)
 - LangChain (for text processing)
 
 ## Environment Setup
@@ -222,6 +224,26 @@ TAVILY_API_KEY=tvly-your_tavily_api_key_here
 # Optional: Pinecone Configuration (for RAG features)
 PINECONE_API_KEY=your_pinecone_api_key_here
 PINECONE_INDEX_NAME=your_index_name_here
+PINECONE_REGION=us-east-1
+EMBEDDING_MODEL=llama-text-embed-v2
+EMBEDDING_DIMENSIONS=1024
+
+# Optional: Neo4j AuraDB Configuration (for RAG graph traversal - OAuth)
+NEO4J_URI=neo4j+s://<instance-id>.databases.neo4j.io
+NEO4J_CLIENT_ID=your_client_id
+NEO4J_CLIENT_SECRET=your_client_secret
+
+# Optional: Cohere API Key (for RAG reranking fallback)
+COHERE_API_KEY=your_cohere_api_key
+
+# Optional: Jina API Key (for high-speed race reranker - Racer A)
+JINA_API_KEY=jina_your_jina_api_key_here
+
+# Optional: Hugging Face Token (for high-speed race reranker - Racer B)
+HF_TOKEN=your_huggingface_token_here
+
+# Optional: Groq API Key (for high-speed race reranker - Racer C: Listwise Llama)
+GROQ_API_KEY=your_groq_api_key_here
 ```
 
 ### Getting API Keys
@@ -239,8 +261,48 @@ PINECONE_INDEX_NAME=your_index_name_here
 3. **Pinecone API Key** (for RAG):
    - Visit [Pinecone](https://www.pinecone.io/)
    - Create an account and index
-   - Set index dimensions to `1536` (for `text-embedding-3-small`)
-   - Add to `backend/.env` as `PINECONE_API_KEY=your_key_here` and `PINECONE_INDEX_NAME=your_index_name`
+   - **Hosted on AWS**: Configure index in AWS us-east-1 region
+   - Set index dimensions to `1024` (for `llama-text-embed-v2`)
+   - Add to `backend/.env` as:
+     - `PINECONE_API_KEY=your_key_here`
+     - `PINECONE_INDEX_NAME=your_index_name`
+     - `PINECONE_REGION=us-east-1` (optional, defaults to us-east-1)
+     - `EMBEDDING_MODEL=llama-text-embed-v2` (optional, defaults to llama-text-embed-v2)
+     - `EMBEDDING_DIMENSIONS=1024` (optional, defaults to 1024)
+
+4. **Neo4j AuraDB** (for RAG graph traversal):
+   - Visit [Neo4j AuraDB](https://neo4j.com/cloud/aura/)
+   - Create a free or professional AuraDB instance
+   - Copy the connection URI (format: `neo4j+s://<instance-id>.databases.neo4j.io`)
+   - Create OAuth credentials (Client ID and Client Secret) in the AuraDB dashboard
+   - Add to `backend/.env` as `NEO4J_URI=your_uri`, `NEO4J_CLIENT_ID=your_client_id`, and `NEO4J_CLIENT_SECRET=your_client_secret`
+   - **⚠️ AuraDB Free Limits**: 200,000 nodes and 400,000 relationships maximum
+   - **Note**: Uses OAuth token authentication (tokens auto-refresh)
+
+5. **Cohere API Key** (optional, for RAG reranking fallback):
+   - Visit [Cohere](https://cohere.com/)
+   - Sign up and get your API key
+   - Add to `backend/.env` as `COHERE_API_KEY=your_key_here`
+
+6. **Jina API Key** (optional, for high-speed race reranker - Racer A):
+   - Visit [Jina AI](https://jina.ai/)
+   - Sign up and get your API key
+   - Add to `backend/.env` as `JINA_API_KEY=jina_your_key_here`
+   - Used in race reranker for sub-second latency (<1000ms)
+
+7. **Hugging Face Token** (optional, for high-speed race reranker - Racer B):
+   - Visit [Hugging Face](https://huggingface.co/)
+   - Create an account and generate an access token
+   - Add to `backend/.env` as `HF_TOKEN=your_token_here`
+   - Used in race reranker for sub-second latency (<1000ms)
+
+8. **Groq API Key** (optional, for race reranker and RAG generation):
+   - Visit [Groq](https://console.groq.com/)
+   - Create an account and generate an API key
+   - Add to `backend/.env` as `GROQ_API_KEY=your_key_here`
+   - **Race Reranker**: Uses `llama3-8b-8192` model for fast listwise ranking (sub-second latency)
+   - **RAG Generation**: Uses `llama-3.3-70b-versatile` model for high-quality answer generation with citations
+   - **Note**: At least one reranker (Jina, HF, or Groq) should be configured for race reranker to work
 
 ## Feature Details
 
@@ -259,13 +321,40 @@ PINECONE_INDEX_NAME=your_index_name_here
 - **Smart context**: Web search results automatically included in LLM context
 
 ### RAG Pipeline (Retrieval-Augmented Generation)
+
+#### Ingestion
 - **Smart Ingestion**: Document processing with global summarization
 - **Context-aware chunking**: Each chunk includes document-level context
-- **Vector storage**: Pinecone integration for semantic search
-- **Embedding generation**: OpenAI `text-embedding-3-small` embeddings
+- **Dynamic Storage Strategy**:
+  - **Files < 5MB**: Stored in client-side IndexedDB (fast, local access)
+  - **Files >= 5MB**: Stored in Pinecone (cloud vector database)
+- **Vector storage**: Pinecone integration for semantic search (large files)
+- **Client-side storage**: IndexedDB for small files (fast retrieval, offline support)
+- **Embedding generation**: Pinecone Inference API `llama-text-embed-v2` (1024 dimensions) with OpenAI fallback
 - **Metadata rich**: Stores summaries, labels, and user namespacing
 
-See [RAG Ingestion Documentation](./backend/src/lib/rag/README.md) for detailed usage.
+#### Hybrid Retrieval
+- **Vector Search**: Pinecone semantic search (top 10 chunks)
+- **Graph Traversal**: Neo4j AuraDB shortest path extraction
+- **Parallel Execution**: Both searches run simultaneously for performance
+- **High-Speed Race Reranker**: Sub-second latency (<1000ms) reranking system
+  - **Racer A**: Jina Rerank API (fast, commercial)
+  - **Racer B**: Hugging Face Inference API with `BAAI/bge-reranker-v2-m3` (SOTA open source)
+  - **Racer C**: Groq Llama Listwise Reranker (`llama3-8b-8192`) - Fast LLM-based ranking
+  - **Race Logic**: All configured rerankers race in parallel; first to return wins
+  - **Timeout**: 950ms timeout to guarantee sub-second SLA
+  - **Fallback**: Falls back to Cohere reranker or score-based sorting if race reranker unavailable
+- **OAuth Authentication**: Automatic token management for Neo4j AuraDB
+
+#### Generation
+- **Context Formatting**: Formats reranked documents into structured context blocks with citations
+- **Source Attribution**: Each document includes source ID, origin type (Graph-Node/Vector-Chunk), and context metadata
+- **Citation Generation**: Uses Groq `llama-3.3-70b-versatile` for high-quality reasoning with automatic citation extraction
+- **Strict Context**: System prompt enforces citation rules and prevents hallucination
+- **Citation Extraction**: Automatically extracts `[Source: X]` patterns from generated text
+- **Deduplication**: Removes duplicate chunks from combined results
+
+See [RAG Documentation](./backend/src/lib/rag/README.md) and [Retrieval Documentation](./backend/src/lib/rag/retrieve-README.md) for detailed usage.
 
 ## API Endpoints
 
@@ -274,9 +363,17 @@ See [RAG Ingestion Documentation](./backend/src/lib/rag/README.md) for detailed 
 - `POST /api/llm/sessions/:sessionId/ask` - Ask question (supports `useWebSearch` parameter)
 - `POST /api/llm/sessions/:sessionId/answers` - Generate answers and insights
 
-### RAG Endpoints
-- Use `ragIngestionService.ingestDocument()` or `ragIngestionService.ingestFromBuffer()` directly
-- See [RAG Documentation](./backend/src/lib/rag/README.md) for details
+### RAG Services
+
+**Ingestion**:
+- `ragIngestionService.ingestDocument(text, userId, pageNumber?)` - Ingest text document
+- `ragIngestionService.ingestFromBuffer(buffer, userId, pageNumber?)` - Ingest from file buffer
+
+**Retrieval**:
+- `hybridRetrieverService.retrieve(query, userId, topK?)` - Hybrid retrieval (vector + graph)
+- `hybridRetrieverService.checkDatabaseStats()` - Monitor Neo4j usage and limits
+
+See [RAG Documentation](./backend/src/lib/rag/README.md) and [Retrieval Documentation](./backend/src/lib/rag/retrieve-README.md) for details.
 
 ## Usage Examples
 
@@ -297,7 +394,54 @@ const result = await ragIngestionService.ingestDocument(
 if (result.success) {
   console.log(`Ingested ${result.chunksAdded} chunks`);
   console.log(`Summary: ${result.summary}`);
+  console.log(`Label: ${result.label}`);
 }
+```
+
+### RAG Hybrid Retrieval
+```typescript
+import { hybridRetrieverService } from './backend/src/lib/rag/retrieve';
+
+const result = await hybridRetrieverService.retrieve(
+  'What is the main topic?',
+  'user-123',
+  5 // top-K results
+);
+
+console.log(`Found ${result.chunks.length} chunks`);
+console.log(`Vector: ${result.vectorCount}, Graph: ${result.graphCount}`);
+
+// Check database statistics
+const stats = await hybridRetrieverService.checkDatabaseStats();
+console.log(`Nodes: ${stats.nodeCount}, Relationships: ${stats.relationshipCount}`);
+```
+
+### RAG Generation (Complete Pipeline)
+```typescript
+import { hybridRetrieverService } from './backend/src/lib/rag/retrieve';
+import { generateAnswer } from './backend/src/lib/rag/generate';
+
+// Step 1: Retrieve relevant documents
+const retrievalResult = await hybridRetrieverService.retrieve(
+  'What were the key financial results?',
+  'user-123',
+  5
+);
+
+// Step 2: Generate answer with citations
+const generationResult = await generateAnswer(
+  'What were the key financial results?',
+  retrievalResult.chunks.map(chunk => ({
+    id: chunk.id,
+    content: chunk.text,
+    original_score: chunk.score,
+    metadata: chunk.metadata,
+  })),
+  5 // top-K documents to use
+);
+
+console.log(`Answer: ${generationResult.answer}`);
+console.log(`Citations: ${generationResult.citations.join(', ')}`);
 ```
 
 ## Development Notes
@@ -308,10 +452,35 @@ if (result.success) {
 - Credits reset on server restart (in-memory tracking)
 
 ### RAG Pipeline
+
+**Ingestion**:
 - Chunk size: 1000 characters
 - Chunk overlap: 100 characters
-- Embedding model: `text-embedding-3-small` (1536 dimensions)
+- **File size threshold**: 5MB (determines storage location)
+- **Small files (< 5MB)**: Client-side IndexedDB storage
+  - Fast local access
+  - Offline support
+  - No server round-trip
+- **Large files (>= 5MB)**: Pinecone cloud storage
+  - Scalable vector search
+  - Server-side processing
+- Embedding model: `llama-text-embed-v2` via Pinecone Inference API (1024 dimensions)
+- Pinecone region: AWS us-east-1
 - Pinecone batch size: 100 vectors per upsert
+- Fallback: OpenAI `text-embedding-3-small` if Pinecone Inference API unavailable
+
+**Retrieval**:
+- Vector search: Top 10 chunks from Pinecone
+- Graph search: Shortest path extraction from Neo4j
+- Reranking: Top 5 results using race reranker (Jina/HF/Groq race) → Cohere fallback → score-based fallback
+- OAuth token refresh: Automatic refresh 100 seconds before expiry
+
+**Generation**:
+- Model: Groq `llama-3.3-70b-versatile` for high-quality reasoning
+- Context formatting: Structured blocks with source IDs, origin types, and metadata
+- Citation extraction: Automatic extraction of `[Source: X]` patterns from generated text
+- Temperature: 0.3 for factual accuracy
+- Max tokens: 1024 for comprehensive answers
 
 ## Next Steps
 
@@ -320,16 +489,17 @@ if (result.success) {
 3. **File Upload**: Implement actual file upload handling for PDFs
 4. **Real-time Features**: Add WebSocket support for real-time updates
 5. **Testing**: Add unit and integration tests
-6. **RAG Retrieval**: Implement query retrieval from Pinecone
+6. **RAG Integration**: Integrate hybrid retriever with LLM service for enhanced Q&A
 7. **Credit Persistence**: Store credit usage in database for persistence
+8. **Graph Schema**: Implement automatic graph schema creation during ingestion
 
 ## Contributing
--- cursor as helper --
 
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## License
 

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import Sidebar from '../components/Sidebar';
 import MobileHeader from '../components/MobileHeader';
 import { FileText, GraduationCap, Bot, Plus, Calendar } from 'lucide-react';
+import { logger } from '../utils/logger';
 
 interface HomePageProps {
   onNavigate: (page: string, options?: any) => void;
@@ -10,54 +11,71 @@ interface HomePageProps {
 const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
   const [showMobileMenu, setShowMobileMenu] = useState(false);
 
+  React.useEffect(() => {
+    logger.home('Home page loaded');
+  }, []);
+
   const actionCards = [
     {
       icon: FileText,
       title: 'Upload Files',
       description: 'For in-meeting assistance and citations',
       color: 'green',
-      onClick: () =>
+      onClick: () => {
+        logger.home('Navigate to upload files', { target: 'knowledge-base', tab: 'documents' });
         onNavigate('knowledge-base', {
           knowledgeBaseTab: 'documents',
           openModal: 'uploadDocument',
-        }),
+        });
+      },
     },
     {
       icon: GraduationCap,
       title: 'Create Cue Cards',
       description: 'For exact, pre-prepared answer recall in meeting',
       color: 'purple',
-      onClick: () =>
+      onClick: () => {
+        logger.home('Navigate to create cue cards', { target: 'knowledge-base', tab: 'cuecards' });
         onNavigate('knowledge-base', {
           knowledgeBaseTab: 'cuecards',
           openModal: 'uploadDocument',
-        }),
+        });
+      },
     },
     {
       icon: Bot,
       title: 'Setup Agent',
       description: 'To run pre-set actions, instantly, with 1-click.',
       color: 'orange',
-      onClick: () => onNavigate('agent-store', { agentTab: 'predefined' }),
+      onClick: () => {
+        logger.home('Navigate to agent store', { target: 'agent-store', tab: 'predefined' });
+        onNavigate('agent-store', { agentTab: 'predefined' });
+      },
     },
     {
       icon: Plus,
       title: 'Start New Session',
       description: 'Join meeting fully prepared and confident',
       color: 'blue',
-      onClick: () => onNavigate('sessions', { openModal: 'createSession' }),
+      onClick: () => {
+        logger.home('Navigate to create session', { target: 'sessions', action: 'createSession' });
+        onNavigate('sessions', { openModal: 'createSession' });
+      },
     },
     {
       icon: Calendar,
       title: 'Review Meeting',
-      description: 'Recap notes, summaries and insights with Jarwiz',
+      description: 'Recap notes, summaries and insights with Qbot',
       color: 'indigo',
-      onClick: () => onNavigate('sessions'),
+      onClick: () => {
+        logger.home('Navigate to review meetings', { target: 'sessions' });
+        onNavigate('sessions');
+      },
     },
   ];
 
   return (
-    <div className="flex h-screen bg-[#fafafa] overflow-hidden">
+    <div className="flex h-screen bg-ivory overflow-hidden">
       <Sidebar
         currentPage="home"
         showMobileMenu={showMobileMenu}
@@ -96,7 +114,7 @@ const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
                   green: 'bg-emerald-50/50 group-hover:bg-emerald-50 text-emerald-600',
                   purple: 'bg-violet-50/50 group-hover:bg-violet-50 text-violet-600',
                   orange: 'bg-amber-50/50 group-hover:bg-amber-50 text-amber-600',
-                  blue: 'bg-blue-50/50 group-hover:bg-blue-50 text-blue-600',
+                  blue: 'bg-black group-hover:bg-gray-900 text-white border-2 border-red-600',
                   indigo: 'bg-indigo-50/50 group-hover:bg-indigo-50 text-indigo-600',
                 };
 
@@ -104,7 +122,7 @@ const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
                   <button
                     key={index}
                     onClick={card.onClick}
-                    className="group bg-white p-5 rounded-xl hover:shadow-sm transition-all duration-200 text-left border border-gray-100 hover:border-gray-200"
+                    className="group bg-ivory p-5 rounded-xl hover:shadow-sm transition-all duration-200 text-left border-2 border-gray-200 hover:border-red-600"
                   >
                     <div
                       className={`w-11 h-11 ${colorClasses[card.color as keyof typeof colorClasses]} rounded-xl flex items-center justify-center mb-4 transition-all duration-200 group-hover:scale-105`}

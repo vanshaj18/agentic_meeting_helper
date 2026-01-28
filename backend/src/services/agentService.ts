@@ -1,4 +1,5 @@
 import { Agent, CreateAgentData } from '../../../shared/types';
+import { logger } from '../utils/logger';
 
 // In-memory storage (replace with database in production)
 const predefinedAgents: Agent[] = [
@@ -64,21 +65,25 @@ let myAgents: Agent[] = [];
 let nextId = 8;
 
 export const getAgents = (type?: 'predefined' | 'my'): Agent[] => {
-  if (type === 'my') {
-    return myAgents;
-  }
-  return predefinedAgents;
+  const agents = type === 'my' ? myAgents : predefinedAgents;
+  logger.agent('Retrieving agents', { type: type || 'all', count: agents.length });
+  return agents;
 };
 
 export const getAllAgents = (): Agent[] => {
-  return [...predefinedAgents, ...myAgents];
+  const allAgents = [...predefinedAgents, ...myAgents];
+  logger.agent('Retrieving all agents', { totalCount: allAgents.length });
+  return allAgents;
 };
 
 export const getAgentById = (id: number): Agent | undefined => {
-  return getAllAgents().find(a => a.id === id);
+  const agent = getAllAgents().find(a => a.id === id);
+  logger.agent('Retrieved agent by ID', { agentId: id, found: !!agent });
+  return agent;
 };
 
 export const createAgent = (data: CreateAgentData): Agent => {
+  logger.agent('Creating new agent', { name: data.name, tagCount: data.tags ? data.tags.split(',').length : 0 });
   const newAgent: Agent = {
     id: nextId++,
     name: data.name,
@@ -88,12 +93,17 @@ export const createAgent = (data: CreateAgentData): Agent => {
     guardrails: data.guardrails
   };
   myAgents.push(newAgent);
+  logger.agent('Agent created successfully', { agentId: newAgent.id, name: newAgent.name });
   return newAgent;
 };
 
 export const updateAgent = (id: number, updates: Partial<CreateAgentData>): Agent | undefined => {
+  logger.agent('Updating agent', { agentId: id, updates: Object.keys(updates) });
   const index = myAgents.findIndex(a => a.id === id);
-  if (index === -1) return undefined;
+  if (index === -1) {
+    logger.agentError('Agent not found for update', undefined, { agentId: id });
+    return undefined;
+  }
   
   const agent = myAgents[index];
   myAgents[index] = {
@@ -104,13 +114,19 @@ export const updateAgent = (id: number, updates: Partial<CreateAgentData>): Agen
     prompt: updates.prompt ?? agent.prompt,
     guardrails: updates.guardrails ?? agent.guardrails
   };
+  logger.agent('Agent updated successfully', { agentId: id });
   return myAgents[index];
 };
 
 export const deleteAgent = (id: number): boolean => {
+  logger.agent('Deleting agent', { agentId: id });
   const index = myAgents.findIndex(a => a.id === id);
-  if (index === -1) return false;
+  if (index === -1) {
+    logger.agentError('Agent not found for deletion', undefined, { agentId: id });
+    return false;
+  }
   
   myAgents.splice(index, 1);
+  logger.agent('Agent deleted successfully', { agentId: id });
   return true;
 };

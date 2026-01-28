@@ -1,0 +1,54 @@
+/* Global Color Definitions - CSS Variables */
+
+:root {
+  /* Background Colors */
+  --color-bg-primary: #FFFFFF; /* Elegant White */
+  --color-bg-secondary: #F8F9FA; /* Elegant Gray */
+  --color-bg-tertiary: #FAFBFC; /* Elegant Light Gray */
+  --color-bg-modal-overlay: rgba(0, 0, 0, 0.75); /* Solid dark overlay for modals */
+  --color-bg-white: #FFFFFF;
+  --color-bg-gray-50: #F9FAFB;
+  --color-bg-gray-100: #F3F4F6;
+  --color-bg-gray-200: #E5E7EB;
+  
+  /* Text Colors */
+  --color-text-primary: #111827; /* Gray 900 */
+  --color-text-secondary: #6B7280; /* Gray 500 */
+  --color-text-tertiary: #9CA3AF; /* Gray 400 */
+  --color-text-muted: #D1D5DB; /* Gray 300 */
+  --color-text-white: #FFFFFF;
+  
+  /* Border Colors */
+  --color-border-primary: #E5E7EB; /* Gray 200 */
+  --color-border-secondary: #D1D5DB; /* Gray 300 */
+  --color-border-accent: #2563EB; /* Blue 600 */
+  --color-border-focus: #111827; /* Gray 900 */
+  
+  /* Accent Colors */
+  --color-accent-primary: #111827; /* Black/Gray 900 */
+  --color-accent-primary-hover: #1F2937; /* Gray 800 */
+  --color-accent-red: #2563EB; /* Blue 600 */
+  --color-accent-red-hover: #1D4ED8; /* Blue 700 */
+  --color-accent-red-light: #DBEAFE; /* Blue 100 */
+  --color-accent-blue: #2563EB; /* Blue 600 */
+  --color-accent-blue-hover: #1D4ED8; /* Blue 700 */
+  --color-accent-green: #16A34A; /* Green 600 */
+  --color-accent-green-hover: #15803D; /* Green 700 */
+  --color-accent-indigo: #4F46E5; /* Indigo 600 */
+  --color-accent-indigo-light: #f3f4fa; /* Indigo 50 */
+  
+  /* Shadow Colors */
+  --color-shadow-sm: rgba(0, 0, 0, 0.05);
+  --color-shadow-md: rgba(0, 0, 0, 0.1);
+  --color-shadow-lg: rgba(0, 0, 0, 0.15);
+  --color-shadow-xl: rgba(0, 0, 0, 0.2);
+  --color-shadow-2xl: rgba(0, 0, 0, 0.25);
+  
+  /* Status Colors */
+  --color-success: #16A34A; /* Green 600 */
+  --color-success-light: #D1FAE5; /* Green 100 */
+  --color-error: #DC2626; /* Red 600 */
+  --color-error-light: #FEE2E2; /* Red 100 */
+  --color-warning: #D97706; /* Amber 600 */
+  --color-info: #2563EB; /* Blue 600 */
+}

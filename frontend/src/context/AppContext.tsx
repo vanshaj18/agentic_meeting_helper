@@ -1,6 +1,12 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 import { Session, Document, Agent, ChatMessage } from '@shared/types';
 
+interface User {
+  name: string;
+  email: string;
+  image?: string | null;
+}
+
 interface AppContextType {
   sessions: Session[];
   documents: Document[];
@@ -11,6 +17,7 @@ interface AppContextType {
   selectedSession: Session | null;
   selectedDocument: Document | null;
   selectedAgent: Agent | null;
+  user: User;
   setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
   setDocuments: React.Dispatch<React.SetStateAction<Document[]>>;
   setCueCards: React.Dispatch<React.SetStateAction<Document[]>>;
@@ -20,6 +27,7 @@ interface AppContextType {
   setSelectedSession: React.Dispatch<React.SetStateAction<Session | null>>;
   setSelectedDocument: React.Dispatch<React.SetStateAction<Document | null>>;
   setSelectedAgent: React.Dispatch<React.SetStateAction<Agent | null>>;
+  setUser: React.Dispatch<React.SetStateAction<User>>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -34,6 +42,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+  const [user, setUser] = useState<User>({
+    name: 'vanshaj kerni',
+    email: 'masamuno18@gmail.com',
+    image: null,
+  });
 
   return (
     <AppContext.Provider
@@ -47,6 +60,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         selectedSession,
         selectedDocument,
         selectedAgent,
+        user,
         setSessions,
         setDocuments,
         setCueCards,
@@ -56,6 +70,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setSelectedSession,
         setSelectedDocument,
         setSelectedAgent,
+        setUser,
       }}
     >
       {children}

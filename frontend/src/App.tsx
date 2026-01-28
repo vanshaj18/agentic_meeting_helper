@@ -6,6 +6,7 @@ import KnowledgeBasePage from './pages/KnowledgeBasePage';
 import AgentStorePage from './pages/AgentStorePage';
 import ActiveSessionPage from './pages/ActiveSessionPage';
 import TemplatesPage from './pages/TemplatesPage';
+import FloatingChatBubble from './components/FloatingChatBubble';
 
 type NavigationOptions = {
   knowledgeBaseTab?: 'documents' | 'cuecards';
@@ -30,16 +31,26 @@ function App() {
     <AppProvider>
       {currentPage === 'home' && <HomePage onNavigate={handleNavigate} />}
       {currentPage === 'sessions' && (
-        <SessionsPage onNavigate={handleNavigate} initialOptions={navigationOptions} />
+        <SessionsPage 
+          onNavigate={handleNavigate} 
+          initialOptions={navigationOptions.openModal === 'createSession' ? { openModal: 'createSession' } : undefined} 
+        />
       )}
       {currentPage === 'knowledge-base' && (
-        <KnowledgeBasePage onNavigate={handleNavigate} initialOptions={navigationOptions} />
+        <KnowledgeBasePage 
+          onNavigate={handleNavigate} 
+          initialOptions={{
+            ...(navigationOptions.knowledgeBaseTab && { knowledgeBaseTab: navigationOptions.knowledgeBaseTab }),
+            ...(navigationOptions.openModal === 'uploadDocument' && { openModal: 'uploadDocument' as const })
+          }} 
+        />
       )}
       {currentPage === 'agent-store' && (
         <AgentStorePage onNavigate={handleNavigate} initialOptions={navigationOptions} />
       )}
       {currentPage === 'templates' && <TemplatesPage onNavigate={handleNavigate} />}
       {currentPage === 'active-session' && <ActiveSessionPage onNavigate={handleNavigate} />}
+      <FloatingChatBubble />
     </AppProvider>
   );
 }

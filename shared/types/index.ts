@@ -35,6 +35,7 @@ export interface Document {
   id: number;
   title: string;
   description: string;
+  label?: string;
   type: 'document' | 'cuecard';
   fileUrl?: string;
   fileName?: string;
@@ -77,6 +78,7 @@ export interface CreateAgentData {
 export interface UploadDocumentData {
   title: string;
   description: string;
+  label?: string;
   file: File | null;
 }
 

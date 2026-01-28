@@ -6,6 +6,7 @@ import documentsRouter from './routes/documents';
 import agentsRouter from './routes/agents';
 import templatesRouter from './routes/templates';
 import llmRouter from './routes/llm';
+import ragRouter from './routes/rag';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -21,6 +22,7 @@ app.use('/api/documents', documentsRouter);
 app.use('/api/agents', agentsRouter);
 app.use('/api/templates', templatesRouter);
 app.use('/api/llm', llmRouter);
+app.use('/api/rag', ragRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {

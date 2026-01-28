@@ -24,6 +24,7 @@ export const createDocument = (data: UploadDocumentData): Document => {
     id: nextId++,
     title: data.title,
     description: data.description,
+    label: data.label,
     type: 'document'
   };
   documents.push(newDoc);
@@ -35,6 +36,7 @@ export const createCueCard = (data: UploadDocumentData): Document => {
     id: nextId++,
     title: data.title,
     description: data.description,
+    label: data.label,
     type: 'cuecard'
   };
   cueCards.push(newCard);

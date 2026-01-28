@@ -3,10 +3,11 @@ import Sidebar from '../components/Sidebar';
 import MobileHeader from '../components/MobileHeader';
 import CreateAgentModal from '../components/modals/CreateAgentModal';
 import AgentDetailsModal from '../components/modals/AgentDetailsModal';
-import { Bot, Store, Plus, MoreVertical, Edit, Trash } from 'lucide-react';
+import { Bot, Store, Plus, MoreVertical, Edit, Trash, Loader2 } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import { agentsAPI } from '../services/api';
 import { Agent, CreateAgentData } from '@shared/types';
+import { logger } from '../utils/logger';
 
 interface AgentStorePageProps {
   onNavigate: (page: string, options?: any) => void;
@@ -23,6 +24,7 @@ const AgentStorePage: React.FC<AgentStorePageProps> = ({ onNavigate, initialOpti
     initialOptions?.agentTab || 'predefined'
   );
   const [showAgentMenu, setShowAgentMenu] = useState<number | null>(null);
+  const [deletingAgentId, setDeletingAgentId] = useState<number | null>(null);
   const {
     predefinedAgents,
     myAgents,
@@ -33,46 +35,70 @@ const AgentStorePage: React.FC<AgentStorePageProps> = ({ onNavigate, initialOpti
   } = useAppContext();
 
   useEffect(() => {
-    agentsAPI.getAll('predefined').then(setPredefinedAgents).catch(console.error);
-    agentsAPI.getAll('my').then(setMyAgents).catch(console.error);
-  }, [setPredefinedAgents, setMyAgents]);
+    logger.agent('Agent store page loaded', { activeTab: activeAgentTab });
+    agentsAPI.getAll('predefined')
+      .then((agents) => {
+        setPredefinedAgents(agents);
+        logger.agent('Predefined agents fetched', { count: agents.length });
+      })
+      .catch((error) => {
+        logger.agentError('Failed to fetch predefined agents', error);
+      });
+    agentsAPI.getAll('my')
+      .then((agents) => {
+        setMyAgents(agents);
+        logger.agent('My agents fetched', { count: agents.length });
+      })
+      .catch((error) => {
+        logger.agentError('Failed to fetch my agents', error);
+      });
+  }, [setPredefinedAgents, setMyAgents, activeAgentTab]);
 
   const currentAgents = activeAgentTab === 'predefined' ? predefinedAgents : myAgents;
 
   const handleCreateAgent = async (agentData: CreateAgentData) => {
+    logger.agent('Creating new agent', { name: agentData.name });
     try {
       const newAgent = await agentsAPI.create(agentData);
       setMyAgents([...myAgents, newAgent]);
       setShowCreateAgentModal(false);
+      logger.agent('Agent created successfully', { agentId: newAgent.id, name: newAgent.name });
     } catch (error) {
-      console.error('Failed to create agent:', error);
+      logger.agentError('Failed to create agent', error as Error, { name: agentData.name });
     }
   };
 
   const handleEditAgent = async (agentData: CreateAgentData) => {
     if (!selectedAgent) return;
+    logger.agent('Updating agent', { agentId: selectedAgent.id, name: agentData.name });
     try {
       const updatedAgent = await agentsAPI.update(selectedAgent.id, agentData);
       setMyAgents(myAgents.map((agent) => (agent.id === selectedAgent.id ? updatedAgent : agent)));
       setShowCreateAgentModal(false);
       setSelectedAgent(null);
+      logger.agent('Agent updated successfully', { agentId: selectedAgent.id });
     } catch (error) {
-      console.error('Failed to update agent:', error);
+      logger.agentError('Failed to update agent', error as Error, { agentId: selectedAgent.id });
     }
   };
 
   const handleDeleteAgent = async (agent: Agent) => {
+    setDeletingAgentId(agent.id);
+    logger.agent('Deleting agent', { agentId: agent.id, name: agent.name });
     try {
       await agentsAPI.delete(agent.id);
       setMyAgents(myAgents.filter((a) => a.id !== agent.id));
       setShowAgentMenu(null);
+      logger.agent('Agent deleted successfully', { agentId: agent.id });
     } catch (error) {
-      console.error('Failed to delete agent:', error);
+      logger.agentError('Failed to delete agent', error as Error, { agentId: agent.id });
+    } finally {
+      setDeletingAgentId(null);
     }
   };
 
   return (
-    <div className="flex h-screen bg-gray-50 overflow-hidden">
+    <div className="flex h-screen bg-ivory overflow-hidden">
       <Sidebar
         currentPage="agent-store"
         showMobileMenu={showMobileMenu}
@@ -102,8 +128,8 @@ const AgentStorePage: React.FC<AgentStorePageProps> = ({ onNavigate, initialOpti
               onClick={() => setActiveAgentTab('predefined')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-200 text-sm font-medium ${
                 activeAgentTab === 'predefined'
-                  ? 'bg-white text-gray-900 shadow-sm border border-gray-200'
-                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                  ? 'bg-ivory text-gray-900 shadow-sm border-2 border-red-600'
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-ivory-dark'
               }`}
             >
               <Bot className="w-4 h-4" />
@@ -113,8 +139,8 @@ const AgentStorePage: React.FC<AgentStorePageProps> = ({ onNavigate, initialOpti
               onClick={() => setActiveAgentTab('my')}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all duration-200 text-sm font-medium ${
                 activeAgentTab === 'my'
-                  ? 'bg-white text-gray-900 shadow-sm border border-gray-200'
-                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                  ? 'bg-ivory text-gray-900 shadow-sm border-2 border-red-600'
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-ivory-dark'
               }`}
             >
               <Store className="w-4 h-4" />
@@ -122,7 +148,7 @@ const AgentStorePage: React.FC<AgentStorePageProps> = ({ onNavigate, initialOpti
             </button>
           </div>
 
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
+          <div className="bg-ivory rounded-xl border-2 border-red-600 shadow-sm">
             <div className="p-5 md:p-6 border-b border-gray-100">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
@@ -161,7 +187,7 @@ const AgentStorePage: React.FC<AgentStorePageProps> = ({ onNavigate, initialOpti
                   <p className="text-sm mb-4">Create your first AI agent to get started.</p>
                   <button
                     onClick={() => setShowCreateAgentModal(true)}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                    className="px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-900 border-2 border-red-600"
                   >
                     Create Agent
                   </button>
@@ -177,8 +203,8 @@ const AgentStorePage: React.FC<AgentStorePageProps> = ({ onNavigate, initialOpti
                     }}
                   >
                     <div className="flex items-center gap-3 md:gap-4 flex-1 min-w-0">
-                      <div className="w-10 h-10 bg-blue-50/50 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <Bot className="w-5 h-5 text-blue-600" />
+                      <div className="w-10 h-10 bg-black rounded-lg flex items-center justify-center flex-shrink-0 border-2 border-red-600">
+                        <Bot className="w-5 h-5 text-white" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <h3 className="font-medium text-gray-900 mb-1 text-sm">{agent.name}</h3>
@@ -221,10 +247,15 @@ const AgentStorePage: React.FC<AgentStorePageProps> = ({ onNavigate, initialOpti
                               </button>
                               <button
                                 onClick={() => handleDeleteAgent(agent)}
-                                className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                                disabled={deletingAgentId === agent.id}
+                                className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
                               >
-                                <Trash className="w-4 h-4" />
-                                Delete
+                                {deletingAgentId === agent.id ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <Trash className="w-4 h-4" />
+                                )}
+                                {deletingAgentId === agent.id ? 'Deleting...' : 'Delete'}
                               </button>
                             </div>
                           </>

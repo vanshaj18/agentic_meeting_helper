@@ -1,10 +1,15 @@
 import OpenAI from 'openai';
 import { Pinecone } from '@pinecone-database/pinecone';
+import { logger } from '../../utils/logger';
 require('dotenv').config();
 
 const openaiApiKey = process.env.OPENAI_API_KEY || '';
 const pineconeApiKey = process.env.PINECONE_API_KEY || '';
-const pineconeIndexName = process.env.PINECONE_INDEX_NAME || '';
+const pineconeIndexName = process.env.PINECONE_INDEX_NAME || 'ai-remote-work';
+const pineconeIndexHost = process.env.PINECONE_INDEX_HOST || '';
+const pineconeRegion = process.env.PINECONE_REGION || 'us-east-1';
+const embeddingModel = process.env.EMBEDDING_MODEL || 'llama-text-embed-v2';
+const embeddingDimensions = parseInt(process.env.EMBEDDING_DIMENSIONS || '1024');
 
 if (!openaiApiKey) {
   console.warn('⚠️  Warning: OPENAI_API_KEY not set. RAG ingestion will not work.');
@@ -53,7 +58,67 @@ export class RAGIngestionService {
     if (pineconeApiKey) {
       this.pineconeClient = new Pinecone({
         apiKey: pineconeApiKey,
+        // Pinecone hosted on AWS us-east-1
+        // Note: Pinecone SDK automatically uses the correct endpoint based on index configuration
       });
+    }
+  }
+
+  /**
+   * Create or ensure Pinecone index exists with llama-text-embed-v2 model
+   * This creates an index that auto-generates embeddings from chunk_text field
+   */
+  async ensureIndexExists(): Promise<void> {
+    if (!this.pineconeClient) {
+      throw new Error('Pinecone client not initialized. Check PINECONE_API_KEY.');
+    }
+
+    if (!pineconeIndexName) {
+      throw new Error('Pinecone index name not configured. Check PINECONE_INDEX_NAME.');
+    }
+
+    try {
+      // Check if index already exists
+      const existingIndexes = await this.pineconeClient.listIndexes();
+      const indexExists = existingIndexes.indexes?.some(
+        (idx: any) => idx.name === pineconeIndexName
+      );
+
+      if (indexExists) {
+        console.log(`✅ Pinecone index "${pineconeIndexName}" already exists`);
+        return;
+      }
+
+      // Create index with llama-text-embed-v2 model for auto-embedding
+      console.log(`🔄 Creating Pinecone index "${pineconeIndexName}" with llama-text-embed-v2...`);
+      await this.pineconeClient.createIndexForModel({
+        name: pineconeIndexName,
+        cloud: 'aws',
+        region: pineconeRegion,
+        embed: {
+          model: 'llama-text-embed-v2',
+          fieldMap: { text: 'chunk_text' },
+        },
+        waitUntilReady: true,
+      });
+
+      console.log(`✅ Pinecone index "${pineconeIndexName}" created successfully`);
+      logger.rag('Pinecone index created', {
+        indexName: pineconeIndexName,
+        region: pineconeRegion,
+        embeddingModel: 'llama-text-embed-v2',
+      });
+    } catch (error: any) {
+      // If index already exists, that's fine
+      if (error.message?.includes('already exists') || error.message?.includes('409')) {
+        console.log(`✅ Pinecone index "${pineconeIndexName}" already exists`);
+        return;
+      }
+      console.error('Error creating Pinecone index:', error);
+      logger.ragError('Failed to create Pinecone index', error, {
+        indexName: pineconeIndexName,
+      });
+      throw new Error(`Failed to create Pinecone index: ${error.message}`);
     }
   }
 
@@ -211,9 +276,83 @@ ${chunk}`;
   }
 
   /**
-   * Step 3: Generate embeddings for chunks
+   * Step 3: Generate embeddings for chunks using Pinecone Inference API (llama-text-embed-v2)
    */
   private async generateEmbeddings(chunks: string[]): Promise<number[][]> {
+    try {
+      const embeddings: number[][] = [];
+
+      // Use Pinecone Inference API for embeddings
+      if (embeddingModel === 'llama-text-embed-v2' && pineconeApiKey) {
+        logger.rag('Using Pinecone Inference API for embeddings', { 
+          model: embeddingModel, 
+          dimensions: embeddingDimensions,
+          chunkCount: chunks.length 
+        });
+
+        // Process in batches to avoid rate limits
+        const batchSize = 10;
+        for (let i = 0; i < chunks.length; i += batchSize) {
+          const batch = chunks.slice(i, i + batchSize);
+          
+          try {
+            // Pinecone Inference API endpoint for generating embeddings
+            const response = await fetch(`https://api.pinecone.io/inference/generate_embeddings`, {
+              method: 'POST',
+              headers: {
+                'Api-Key': pineconeApiKey,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: embeddingModel,
+                inputs: batch,
+                parameters: {
+                  input_type: 'passage', // Use 'passage' for document chunks, 'query' for search queries
+                  dimensions: embeddingDimensions,
+                },
+              }),
+            });
+
+            if (!response.ok) {
+              const errorText = await response.text();
+              throw new Error(`Pinecone Inference API error: ${response.status} - ${errorText}`);
+            }
+
+            const data = await response.json() as any;
+            
+            // Pinecone Inference API returns embeddings in data.embeddings array
+            if (data.embeddings && Array.isArray(data.embeddings)) {
+              embeddings.push(...data.embeddings);
+            } else if (data.data && Array.isArray(data.data)) {
+              // Alternative response format
+              embeddings.push(...data.data);
+            } else {
+              throw new Error('Unexpected response format from Pinecone Inference API');
+            }
+          } catch (error: any) {
+            logger.ragError('Pinecone Inference API failed, falling back to OpenAI', error, {
+              component: 'RAG',
+            });
+            // Fallback to OpenAI if Pinecone fails
+            return this.generateEmbeddingsOpenAI(chunks);
+          }
+        }
+
+        return embeddings;
+      } else {
+        // Fallback to OpenAI embeddings
+        return this.generateEmbeddingsOpenAI(chunks);
+      }
+    } catch (error: any) {
+      logger.ragError('Failed to generate embeddings', error, { component: 'RAG' });
+      throw new Error(`Failed to generate embeddings: ${error.message}`);
+    }
+  }
+
+  /**
+   * Fallback: Generate embeddings using OpenAI
+   */
+  private async generateEmbeddingsOpenAI(chunks: string[]): Promise<number[][]> {
     try {
       const embeddings: number[][] = [];
 
@@ -232,13 +371,13 @@ ${chunk}`;
 
       return embeddings;
     } catch (error: any) {
-      console.error('Error generating embeddings:', error);
+      console.error('Error generating embeddings with OpenAI:', error);
       throw new Error(`Failed to generate embeddings: ${error.message}`);
     }
   }
 
   /**
-   * Step 4: Upsert chunks to Pinecone
+   * Step 4: Upsert chunks to Pinecone using new upsertRecords API
    */
   private async upsertToPinecone(
     chunks: string[],
@@ -260,16 +399,29 @@ ${chunk}`;
     }
 
     try {
-      const index = this.pineconeClient.index(pineconeIndexName);
-
-      // Prepare vectors for upsert
+      // Get index with optional host, then namespace by userId
       const baseMetadata = metadata[0];
+      const userId = baseMetadata.userId || 'default';
+      
+      // Use namespace per userId for better organization
+      const index = pineconeIndexHost 
+        ? this.pineconeClient.index(pineconeIndexName, pineconeIndexHost)
+        : this.pineconeClient.index(pineconeIndexName);
+      
+      const namespace = index.namespace(userId);
+
+      // Use traditional upsert API with embeddings since we're providing custom embeddings
+      // The new upsertRecords API is for when Pinecone auto-generates embeddings from chunk_text
+      // Since we're using llama-text-embed-v2, we'll use the traditional upsert method
       const vectors = chunks.map((chunk, idx) => {
+        const chunkText = chunk.split('---\n')[1] || chunk; // Extract original chunk text
         const chunkMetadata: Record<string, string | number> = {
-          original_text: chunk.split('---\n')[1] || chunk, // Extract original chunk text (after separator)
+          chunk_text: chunkText, // Store text for reference
+          original_text: chunkText, // Keep for backward compatibility
           doc_summary: baseMetadata.doc_summary || '',
           doc_label: baseMetadata.doc_label || '',
-          userId: baseMetadata.userId || '',
+          category: baseMetadata.doc_label || 'general',
+          userId: userId,
           chunk_index: idx,
         };
 
@@ -279,8 +431,8 @@ ${chunk}`;
         }
 
         return {
-          id: `${baseMetadata.userId || 'unknown'}_${Date.now()}_${idx}`, // Unique ID per chunk
-          values: embeddings[idx],
+          id: `${userId}_${Date.now()}_${idx}`, // Unique ID per chunk
+          values: embeddings[idx], // Custom embedding vector
           metadata: chunkMetadata,
         };
       });
@@ -289,11 +441,122 @@ ${chunk}`;
       const batchSize = 100;
       for (let i = 0; i < vectors.length; i += batchSize) {
         const batch = vectors.slice(i, i + batchSize);
-        await index.upsert(batch);
+        // Use namespace.upsert() for namespaced storage with custom embeddings
+        await namespace.upsert(batch);
       }
+
+      logger.rag('Successfully upserted records to Pinecone namespace', {
+        userId,
+        recordsCount: vectors.length,
+        namespace: userId,
+      });
     } catch (error: any) {
       console.error('Error upserting to Pinecone:', error);
+      logger.ragError('Failed to upsert records to Pinecone', error, {
+        userId: metadata[0]?.userId,
+      });
       throw new Error(`Failed to upsert to Pinecone: ${error.message}`);
+    }
+  }
+
+  /**
+   * Generate chunks for client-side storage (IndexedDB)
+   * Returns chunks data without storing in Pinecone
+   */
+  async generateChunksForIndexedDB(
+    text: string,
+    userId: string
+  ): Promise<{
+    success: boolean;
+    chunks: Array<{
+      content: string;
+      embedding?: number[];
+      metadata: {
+        doc_summary: string;
+        doc_label: string;
+        chunk_index: number;
+        original_text: string;
+        page_number?: number;
+      };
+    }>;
+    summary: string;
+    label: string;
+    error?: string;
+  }> {
+    try {
+      if (!text || text.trim().length === 0) {
+        return {
+          success: false,
+          chunks: [],
+          summary: '',
+          label: '',
+          error: 'Document text is empty',
+        };
+      }
+
+      if (!userId) {
+        return {
+          success: false,
+          chunks: [],
+          summary: '',
+          label: '',
+          error: 'User ID is required',
+        };
+      }
+
+      // Step 1: Global Summarization
+      const { summary, label } = await this.generateGlobalSummary(text);
+
+      // Step 2: Smart Chunking
+      const enrichedChunks = await this.smartChunking(text, summary, label);
+
+      if (enrichedChunks.length === 0) {
+        return {
+          success: false,
+          chunks: [],
+          summary,
+          label,
+          error: 'No chunks created from document',
+        };
+      }
+
+      // Step 3: Generate Embeddings (optional)
+      let embeddings: number[][] = [];
+      try {
+        embeddings = await this.generateEmbeddings(enrichedChunks);
+      } catch (error) {
+        logger.warn('Embedding generation failed for IndexedDB, proceeding without embeddings', {
+          component: 'RAG',
+        });
+      }
+
+      // Prepare chunks data
+      const chunksData = enrichedChunks.map((chunk, idx) => ({
+        content: chunk,
+        embedding: embeddings[idx] || undefined,
+        metadata: {
+          doc_summary: summary,
+          doc_label: label,
+          chunk_index: idx,
+          original_text: chunk.split('---\n')[1] || chunk,
+        },
+      }));
+
+      return {
+        success: true,
+        chunks: chunksData,
+        summary,
+        label,
+      };
+    } catch (error: any) {
+      logger.ragError('Failed to generate chunks for IndexedDB', error, { userId });
+      return {
+        success: false,
+        chunks: [],
+        summary: '',
+        label: '',
+        error: error.message || 'Unknown error during chunk generation',
+      };
     }
   }
 
@@ -351,6 +614,14 @@ ${chunk}`;
         };
       }
 
+      // Ensure index exists (creates if it doesn't exist)
+      try {
+        await this.ensureIndexExists();
+      } catch (error: any) {
+        // Log warning but continue - index might already exist or be managed externally
+        console.warn('⚠️  Could not ensure index exists:', error.message);
+      }
+
       console.log(`📄 Starting RAG ingestion for user: ${userId}`);
 
       // Step 1: Global Summarization
@@ -398,8 +669,9 @@ ${chunk}`;
       ];
 
       await this.upsertToPinecone(chunks, embeddings, metadata);
-      console.log(`✅ Successfully stored ${chunks.length} chunks in Pinecone`);
+      logger.rag('Successfully stored chunks in Pinecone', { userId, chunksAdded: chunks.length });
 
+      logger.rag('RAG ingestion completed successfully', { userId, chunksAdded: chunks.length });
       return {
         success: true,
         chunksAdded: chunks.length,
@@ -407,7 +679,7 @@ ${chunk}`;
         label,
       };
     } catch (error: any) {
-      console.error('Error in RAG ingestion:', error);
+      logger.ragError('RAG ingestion failed', error, { userId });
       return {
         success: false,
         chunksAdded: 0,

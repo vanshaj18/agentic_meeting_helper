@@ -4,17 +4,22 @@ import { getSessionById, updateSession } from '../services/sessionService';
 import { getAgentById } from '../services/agentService';
 import { getDocumentById } from '../services/documentService';
 import { combineAgents } from '../services/agentCombinerService';
+import { logger } from '../utils/logger';
+import { Session } from '../../../shared/types';
 
 const router = express.Router();
 
 // Generate summary for a session
 router.post('/sessions/:sessionId/summary', async (req, res) => {
+  const sessionId = parseInt(req.params.sessionId);
+  logger.llm('API: Generate summary request', { sessionId, agentId: req.body.agentId });
+  
   try {
-    const sessionId = parseInt(req.params.sessionId);
     const agentId = req.body.agentId ? parseInt(req.body.agentId) : undefined;
 
     const session = getSessionById(sessionId);
     if (!session) {
+      logger.llmError('API: Session not found for summary', undefined, { sessionId });
       return res.status(404).json({ error: 'Session not found' });
     }
 
@@ -46,6 +51,7 @@ router.post('/sessions/:sessionId/summary', async (req, res) => {
     const result = await llmService.generateSummary(session, virtualAgent);
 
     if (result.error) {
+      logger.llmError('API: Summary generation failed', undefined, { sessionId, error: result.error });
       return res.status(500).json({ error: result.error });
     }
 
@@ -62,24 +68,36 @@ router.post('/sessions/:sessionId/summary', async (req, res) => {
       updateSession(sessionId, { description });
     }
 
+    logger.llm('API: Summary generated successfully', { sessionId, summaryLength: result.content.length });
     res.json({ summary: result.content });
   } catch (error: any) {
+    logger.llmError('API: Summary generation exception', error, { sessionId });
     res.status(500).json({ error: error.message || 'Failed to generate summary' });
   }
 });
 
 // Ask a question about a session
 router.post('/sessions/:sessionId/ask', async (req, res) => {
+  const sessionId = parseInt(req.params.sessionId);
+  logger.llm('API: Ask question request', { 
+    sessionId, 
+    question: req.body.question?.substring(0, 100),
+    useWebSearch: req.body.useWebSearch,
+    useRAGSearch: req.body.useRAGSearch,
+    agentId: req.body.agentId
+  });
+  
   try {
-    const sessionId = parseInt(req.params.sessionId);
-    const { question, agentId, useWebSearch } = req.body;
+    const { question, agentId, useWebSearch, useRAGSearch, indexedDBChunks, username } = req.body;
 
     if (!question) {
+      logger.llmError('API: Question missing', undefined, { sessionId });
       return res.status(400).json({ error: 'Question is required' });
     }
 
     const session = getSessionById(sessionId);
     if (!session) {
+      logger.llmError('API: Session not found for question', undefined, { sessionId });
       return res.status(404).json({ error: 'Session not found' });
     }
 
@@ -119,29 +137,41 @@ router.post('/sessions/:sessionId/ask', async (req, res) => {
       });
     }
 
-    // Build context with session documents if available, and web search if requested
+    // Build context with session documents if available, web search if requested, and RAG search if requested
     const result = await llmService.askQuestion(
       session, 
       question, 
       virtualAgent, 
       documentTitles,
-      useWebSearch === true
+      useWebSearch === true,
+      useRAGSearch === true,
+      indexedDBChunks, // Pass IndexedDB chunks from frontend
+      username // Pass username for personalization
     );
 
     if (result.error) {
+      logger.llmError('API: Question answering failed', undefined, { sessionId, error: result.error });
       return res.status(500).json({ error: result.error });
     }
 
+    logger.llm('API: Question answered successfully', { sessionId, answerLength: result.content.length });
     res.json({ answer: result.content });
   } catch (error: any) {
+    logger.llmError('API: Question answering exception', error, { sessionId });
     res.status(500).json({ error: error.message || 'Failed to answer question' });
   }
 });
 
 // Generate answers/insights for a session
 router.post('/sessions/:sessionId/answers', async (req, res) => {
+  const sessionId = parseInt(req.params.sessionId);
+  logger.llm('API: Generate answers request', { 
+    sessionId, 
+    agentId: req.body.agentId,
+    qaPairCount: req.body.qaPairs?.length || 0
+  });
+  
   try {
-    const sessionId = parseInt(req.params.sessionId);
     const agentId = req.body.agentId ? parseInt(req.body.agentId) : undefined;
     const qaPairs = req.body.qaPairs; // Optional Q&A pairs from chat
 
@@ -185,7 +215,7 @@ router.post('/sessions/:sessionId/answers', async (req, res) => {
         time: '',
         isUser: true,
       })).concat(qaPairs.map((qa: { question: string; answer: string }, idx: number) => ({
-        sender: `JarWiz`,
+        sender: `Qbot`,
         message: `Answer ${idx + 1}: ${qa.answer}`,
         time: '',
         isUser: false,
@@ -200,12 +230,84 @@ router.post('/sessions/:sessionId/answers', async (req, res) => {
     const result = await llmService.generateAnswers(sessionToUse, virtualAgent);
 
     if (result.error) {
+      logger.llmError('API: Answers generation failed', undefined, { sessionId, error: result.error });
       return res.status(500).json({ error: result.error });
     }
 
+    logger.llm('API: Answers generated successfully', { sessionId, answerLength: result.content.length });
     res.json({ answers: result.content });
   } catch (error: any) {
+    logger.llmError('API: Answers generation exception', error, { sessionId });
     res.status(500).json({ error: error.message || 'Failed to generate answers' });
+  }
+});
+
+// Global chat endpoint (no session required)
+router.post('/chat', async (req, res) => {
+  logger.llm('API: Global chat request', { 
+    question: req.body.question?.substring(0, 100),
+    useWebSearch: req.body.useWebSearch,
+    useRAGSearch: req.body.useRAGSearch,
+    agentId: req.body.agentId
+  });
+  
+  try {
+    const { question, agentId, useWebSearch, useRAGSearch, indexedDBChunks, username } = req.body;
+
+    if (!question) {
+      logger.llmError('API: Question missing', undefined);
+      return res.status(400).json({ error: 'Question is required' });
+    }
+
+    // Create a minimal session object for global chat
+    const globalSession: Session = {
+      id: 0,
+      name: 'Global Chat',
+      description: 'Global AI assistant chat',
+      date: new Date().toISOString(),
+      transcript: [],
+      agentIds: agentId ? [agentId] : undefined,
+      documentIds: undefined,
+    };
+
+    // Get agent if provided
+    let virtualAgent = undefined;
+    if (agentId) {
+      const singleAgent = getAgentById(agentId);
+      if (singleAgent) {
+        virtualAgent = {
+          id: singleAgent.id,
+          name: singleAgent.name,
+          description: singleAgent.description,
+          tags: singleAgent.tags,
+          prompt: singleAgent.prompt,
+          guardrails: singleAgent.guardrails,
+        };
+      }
+    }
+
+    // Build context - no session documents, but can use RAG/web search
+    const result = await llmService.askQuestion(
+      globalSession, 
+      question, 
+      virtualAgent, 
+      [], // No session documents
+      useWebSearch === true,
+      useRAGSearch === true,
+      indexedDBChunks, // Pass IndexedDB chunks from frontend
+      username // Pass username for personalization
+    );
+
+    if (result.error) {
+      logger.llmError('API: Global chat failed', undefined, { error: result.error });
+      return res.status(500).json({ error: result.error });
+    }
+
+    logger.llm('API: Global chat answered successfully', { answerLength: result.content.length });
+    res.json({ answer: result.content });
+  } catch (error: any) {
+    logger.llmError('API: Global chat exception', error);
+    res.status(500).json({ error: error.message || 'Failed to answer question' });
   }
 });
 

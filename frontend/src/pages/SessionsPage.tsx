@@ -8,6 +8,7 @@ import { Calendar, MessageSquare, Plus, Trash, MoreVertical } from 'lucide-react
 import { useAppContext } from '../context/AppContext';
 import { sessionsAPI } from '../services/api';
 import { CreateSessionData, Session } from '@shared/types';
+import { logger } from '../utils/logger';
 
 interface SessionsPageProps {
   onNavigate: (page: string, options?: any) => void;
@@ -23,31 +24,50 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ onNavigate, initialOptions 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [localSelectedSession, setLocalSelectedSession] = useState<Session | null>(null);
   const [showSessionMenu, setShowSessionMenu] = useState<number | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const { sessions, setSessions, setSelectedSession } = useAppContext();
 
   useEffect(() => {
+    logger.session('Sessions page loaded');
     if (initialOptions?.openModal === 'createSession') {
       setShowCreateModal(true);
+      logger.session('Create session modal opened from initial options');
     }
   }, [initialOptions]);
 
   useEffect(() => {
-    sessionsAPI.getAll().then(setSessions).catch(console.error);
+    logger.session('Fetching all sessions');
+    sessionsAPI.getAll()
+      .then((sessions) => {
+        setSessions(sessions);
+        logger.session('Sessions fetched successfully', { sessionCount: sessions.length });
+      })
+      .catch((error) => {
+        logger.sessionError('Failed to fetch sessions', error);
+      });
   }, [setSessions]);
 
   const handleCreateSession = async (sessionData: CreateSessionData) => {
+    logger.session('Creating new session', { name: sessionData.name });
     try {
       const newSession = await sessionsAPI.create(sessionData);
       setSessions([...sessions, newSession]);
       setSelectedSession(newSession);
       setShowCreateModal(false);
-      onNavigate('active-session');
+      logger.session('Session created successfully', { sessionId: newSession.id, name: newSession.name });
+      
+      // Smooth transition to active session page
+      setTimeout(() => {
+        onNavigate('active-session');
+      }, 300);
     } catch (error) {
-      console.error('Failed to create session:', error);
+      logger.sessionError('Failed to create session', error as Error, { name: sessionData.name });
+      throw error; // Re-throw to let modal handle loading state
     }
   };
 
   const handleReviewSession = (session: Session) => {
+    logger.session('Opening session review', { sessionId: session.id, name: session.name });
     setLocalSelectedSession(session);
     setShowReviewModal(true);
     setShowSessionMenu(null);
@@ -55,14 +75,19 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ onNavigate, initialOptions 
 
   const handleDeleteSession = async () => {
     if (!localSelectedSession) return;
+    setIsDeleting(true);
+    logger.session('Deleting session', { sessionId: localSelectedSession.id, name: localSelectedSession.name });
     try {
       await sessionsAPI.delete(localSelectedSession.id);
       setSessions(sessions.filter((s) => s.id !== localSelectedSession.id));
       setShowDeleteModal(false);
+      logger.session('Session deleted successfully', { sessionId: localSelectedSession.id });
       setLocalSelectedSession(null);
       setShowSessionMenu(null);
     } catch (error) {
-      console.error('Failed to delete session:', error);
+      logger.sessionError('Failed to delete session', error as Error, { sessionId: localSelectedSession.id });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -73,7 +98,7 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ onNavigate, initialOptions 
   };
 
   return (
-    <div className="flex h-screen bg-gray-50 overflow-hidden">
+    <div className="flex h-screen bg-ivory overflow-hidden">
       <Sidebar
         currentPage="sessions"
         showMobileMenu={showMobileMenu}
@@ -94,7 +119,7 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ onNavigate, initialOptions 
             <p className="text-sm md:text-base text-gray-400">Review, resume, or start fresh</p>
           </div>
 
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
+          <div className="bg-ivory rounded-xl border-2 border-red-600 shadow-sm">
             <div className="p-5 md:p-6 border-b border-gray-100">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
@@ -133,11 +158,11 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ onNavigate, initialOptions 
                 sessions.map((session) => (
                   <div
                     key={session.id}
-                    className="flex flex-col lg:flex-row lg:items-center justify-between p-4 hover:bg-gray-50/50 rounded-lg border border-gray-100 mb-2 gap-4 transition-colors"
+                    className="flex flex-col lg:flex-row lg:items-center justify-between p-4 hover:bg-ivory-dark rounded-lg border-2 border-gray-200 hover:border-red-600 mb-2 gap-4 transition-colors"
                   >
                     <div className="flex items-start lg:items-center gap-3 md:gap-4 flex-1 min-w-0">
-                      <div className="w-10 h-10 bg-blue-50/50 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <Calendar className="w-5 h-5 text-blue-600" />
+                      <div className="w-10 h-10 bg-black rounded-lg flex items-center justify-center flex-shrink-0 border-2 border-red-600">
+                        <Calendar className="w-5 h-5 text-white" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <h3 className="font-medium text-gray-900 mb-1 text-sm">{session.name}</h3>
@@ -154,7 +179,7 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ onNavigate, initialOptions 
                     <div className="flex items-center gap-2 self-end lg:self-auto">
                       <button
                         onClick={() => handleReviewSession(session)}
-                        className="flex items-center gap-2 px-3 md:px-4 py-2 text-xs md:text-sm border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 whitespace-nowrap transition-colors text-gray-600"
+                        className="flex items-center gap-2 px-3 md:px-4 py-2 text-xs md:text-sm border-2 border-gray-200 rounded-lg hover:bg-ivory-dark hover:border-red-600 whitespace-nowrap transition-colors text-gray-600"
                       >
                         <MessageSquare className="w-4 h-4" />
                         <span className="hidden sm:inline">Review</span>
@@ -164,7 +189,7 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ onNavigate, initialOptions 
                           onClick={() =>
                             setShowSessionMenu(showSessionMenu === session.id ? null : session.id)
                           }
-                          className="p-2 hover:bg-gray-50 rounded-lg transition-colors"
+                          className="p-2 hover:bg-ivory-dark rounded-lg transition-colors"
                         >
                           <MoreVertical className="w-4 h-4 text-gray-400" />
                         </button>
@@ -174,7 +199,7 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ onNavigate, initialOptions 
                               className="fixed inset-0 z-10"
                               onClick={() => setShowSessionMenu(null)}
                             />
-                            <div className="absolute right-0 top-10 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-20">
+                            <div className="absolute right-0 top-10 w-48 bg-ivory rounded-lg shadow-lg border-2 border-red-600 py-2 z-20">
                               <button
                                 onClick={() => handleDeleteClick(session)}
                                 className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
@@ -198,7 +223,14 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ onNavigate, initialOptions 
       {showCreateModal && (
         <CreateSessionModal
           onClose={() => setShowCreateModal(false)}
-          onCreate={handleCreateSession}
+          onCreate={async (data) => {
+            try {
+              await handleCreateSession(data);
+            } catch (error) {
+              // Error is already logged in handleCreateSession
+              // Modal will stay open so user can retry
+            }
+          }}
         />
       )}
 
@@ -220,7 +252,9 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ onNavigate, initialOptions 
           onCancel={() => {
             setShowDeleteModal(false);
             setLocalSelectedSession(null);
+            setIsDeleting(false);
           }}
+          isDeleting={isDeleting}
         />
       )}
     </div>

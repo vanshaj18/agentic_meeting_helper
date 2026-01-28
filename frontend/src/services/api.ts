@@ -59,10 +59,24 @@ export const templatesAPI = {
 export const llmAPI = {
   generateSummary: (sessionId: number, agentId?: number) =>
     api.post<{ summary: string }>(`/llm/sessions/${sessionId}/summary`, { agentId }).then(res => res.data),
-  askQuestion: (sessionId: number, question: string, agentId?: number, useWebSearch?: boolean) =>
-    api.post<{ answer: string }>(`/llm/sessions/${sessionId}/ask`, { question, agentId, useWebSearch }).then(res => res.data),
+  askQuestion: (sessionId: number, question: string, agentId?: number, useWebSearch?: boolean, useRAGSearch?: boolean, indexedDBChunks?: Array<{ id: string; text: string; score?: number; metadata?: Record<string, any> }>, username?: string) =>
+    api.post<{ answer: string }>(`/llm/sessions/${sessionId}/ask`, { question, agentId, useWebSearch, useRAGSearch, indexedDBChunks, username }).then(res => res.data),
   generateAnswers: (sessionId: number, agentId?: number, qaPairs?: { question: string; answer: string }[]) =>
     api.post<{ answers: string }>(`/llm/sessions/${sessionId}/answers`, { agentId, qaPairs }).then(res => res.data),
+  // Global chat (no session required)
+  globalChat: (question: string, agentId?: number, useWebSearch?: boolean, useRAGSearch?: boolean, indexedDBChunks?: Array<{ id: string; text: string; score?: number; metadata?: Record<string, any> }>, username?: string) =>
+    api.post<{ answer: string }>(`/llm/chat`, { question, agentId, useWebSearch, useRAGSearch, indexedDBChunks, username }).then(res => res.data),
+};
+
+// RAG API
+export const ragAPI = {
+  searchIndexedDB: (query: string, userId: string, documentId?: number, topK?: number) => {
+    // This would be handled client-side via indexedDBService
+    // But we can add an endpoint if needed for server-side coordination
+    return Promise.resolve([]);
+  },
+  summarizePage: (text: string, pageNumber: number) =>
+    api.post<{ summary: string | null }>('/rag/summarize-page', { text, pageNumber }).then(res => res.data),
 };
 
 export default api;

@@ -15,7 +15,7 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
   actionIcon,
 }) => {
   return (
-    <div className="lg:hidden bg-white/80 backdrop-blur-sm border-b border-gray-100 p-4 sticky top-0 z-10">
+    <div className="lg:hidden bg-ivory/80 backdrop-blur-sm border-b-2 border-red-600 p-4 sticky top-0 z-10">
       <div className="flex items-center justify-between">
         <button
           onClick={onMenuClick}
