@@ -225,30 +225,44 @@ async function extractPagesFromPDF(file: File): Promise<Array<{ page: number; co
 }
 
 /**
- * Generate page summary using server-side API
+ * Generate page summary with citations using server-side API
  * @param text - Page text content
  * @param pageNumber - Page number for logging
- * @returns Summary string or null if failed
+ * @param isFirstPage - Whether this is the first page (for APA citation generation)
+ * @returns Structured response with summary, topic_tag, and optional apa_citation
  */
 async function generatePageSummary(
   text: string,
-  pageNumber: number
-): Promise<string | null> {
+  pageNumber: number,
+  isFirstPage: boolean = false
+): Promise<{ summary: string | null; topic_tag: string | null; apa_citation: string | null }> {
   // Skip summarization for short pages (< 500 chars)
   if (text.length < 500) {
-    return null;
+    return {
+      summary: null,
+      topic_tag: null,
+      apa_citation: null,
+    };
   }
 
   try {
-    const result = await ragAPI.summarizePage(text, pageNumber);
-    return result.summary;
+    const result = await ragAPI.summarizePage(text, pageNumber, isFirstPage);
+    return {
+      summary: result.summary || null,
+      topic_tag: result.topic_tag || null,
+      apa_citation: result.apa_citation || null,
+    };
   } catch (error: any) {
     logger.error('Failed to generate page summary', error, {
       component: 'RAG',
       page: pageNumber,
       errorMessage: error.message,
     });
-    return null;
+    return {
+      summary: null,
+      topic_tag: null,
+      apa_citation: null,
+    };
   }
 }
 
@@ -406,12 +420,17 @@ export async function ingestDocumentClient(
       page: number;
       chunks: string[];
       summary: string | null;
+      topic_tag: string | null;
+      apa_citation: string | null;
       content: string;
     }> = [];
+
+    let documentApaCitation: string | null = null;
 
     const totalPages = pages.length;
     for (let i = 0; i < pages.length; i++) {
       const page = pages[i];
+      const isFirstPage = i === 0;
       
       if (onProgress) {
         const progress = 10 + Math.floor((i / totalPages) * 40); // 10-50%
@@ -419,28 +438,35 @@ export async function ingestDocumentClient(
       }
 
       // Step 2A & 2B: Start both tasks in parallel
-      const summaryPromise = generatePageSummary(page.content, page.page);
+      const summaryPromise = generatePageSummary(page.content, page.page, isFirstPage);
       const chunksPromise = Promise.resolve(recursiveSplitText(page.content));
 
       // Step 2C: Race the summary with timeout
-      const summary = await raceWithTimeout(
+      const summaryResult = await raceWithTimeout(
         summaryPromise,
         summaryTimeoutMs,
-        null as string | null
+        { summary: null, topic_tag: null, apa_citation: null } as { summary: string | null; topic_tag: string | null; apa_citation: string | null }
       );
 
       // Step 2D: Get chunks (already resolved)
       const chunks = await chunksPromise;
 
-      // Step 2E: Prepend summary to chunks if available
-      const finalChunks = summary
-        ? chunks.map((chunk) => `Context: ${summary}\n\nContent: ${chunk}`)
+      // Step 2E: Store APA citation from first page
+      if (isFirstPage && summaryResult.apa_citation) {
+        documentApaCitation = summaryResult.apa_citation;
+      }
+
+      // Step 2F: Prepend summary to chunks if available
+      const finalChunks = summaryResult.summary
+        ? chunks.map((chunk) => `Context: ${summaryResult.summary}\n\nContent: ${chunk}`)
         : chunks;
 
       processedChunks.push({
         page: page.page,
         chunks: finalChunks,
-        summary: summary || null,
+        summary: summaryResult.summary || null,
+        topic_tag: summaryResult.topic_tag || null,
+        apa_citation: summaryResult.apa_citation || null,
         content: page.content,
       });
 
@@ -448,7 +474,9 @@ export async function ingestDocumentClient(
         documentId,
         page: page.page,
         chunksCount: finalChunks.length,
-        hasSummary: summary !== null,
+        hasSummary: summaryResult.summary !== null,
+        hasTopicTag: summaryResult.topic_tag !== null,
+        hasCitation: summaryResult.apa_citation !== null,
       });
     }
 
@@ -470,11 +498,12 @@ export async function ingestDocumentClient(
       onProgress(90, 100, 'Storing in IndexedDB...');
     }
 
-    // Build LocalDoc structure
+    // Build LocalDoc structure with APA citation
     const docId = `${file.name}_${Date.now()}`;
     const localDoc: LocalDoc = {
       id: docId,
       name: documentTitle,
+      apaCitation: documentApaCitation || file.name, // Fallback to file name if no citation
       pages: processedChunks.map((pc) => ({
         pageNum: pc.page,
         summary: pc.summary || pc.content.substring(0, 200),
@@ -486,7 +515,7 @@ export async function ingestDocumentClient(
 
     await indexedDBService.storeLocalDoc(localDoc);
 
-    // Store chunks in the old format for backward compatibility
+    // Store chunks with citation tags
     let chunkIndex = 0;
     const chunksData = processedChunks.flatMap((pc) => {
       const pageChunks = pc.chunks.map((chunk, idx) => ({
@@ -498,6 +527,7 @@ export async function ingestDocumentClient(
           chunk_index: chunkIndex + idx,
           original_text: pc.content,
           page_number: pc.page,
+          citation_tag: pc.topic_tag || undefined, // Store topic tag as citation_tag
         },
       }));
       chunkIndex += pageChunks.length;
@@ -515,6 +545,7 @@ export async function ingestDocumentClient(
           .map((pc) => pc.summary || pc.content.substring(0, 200))
           .join(' ')
           .substring(0, 500),
+        apaCitation: documentApaCitation || file.name, // Store APA citation in document metadata
       }
     );
 

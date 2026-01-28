@@ -15,6 +15,7 @@ interface ChunkData {
     chunk_index: number;
     original_text: string;
     page_number?: number;
+    citation_tag?: string; // Topic tag for citation
   };
   createdAt: number;
 }
@@ -26,6 +27,7 @@ interface DocumentMetadata {
   label: string;
   summary: string;
   chunkCount: number;
+  apaCitation?: string; // APA citation for the document
   createdAt: number;
 }
 
@@ -35,6 +37,7 @@ interface DocumentMetadata {
 export interface LocalDoc {
   id: string; // file name + timestamp
   name: string;
+  apaCitation?: string; // APA citation for the document
   pages: {
     pageNum: number;
     summary: string;
@@ -110,12 +113,14 @@ class IndexedDBService {
         chunk_index: number;
         original_text: string;
         page_number?: number;
+        citation_tag?: string;
       };
     }>,
     documentMeta: {
       title: string;
       label: string;
       summary: string;
+      apaCitation?: string;
     }
   ): Promise<void> {
     if (!this.db) {
@@ -135,6 +140,7 @@ class IndexedDBService {
         label: documentMeta.label,
         summary: documentMeta.summary,
         chunkCount: chunks.length,
+        apaCitation: documentMeta.apaCitation,
         createdAt: Date.now(),
       };
 

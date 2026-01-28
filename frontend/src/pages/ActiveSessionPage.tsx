@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Video, LogOut, MessageSquare, Send, Mic, MicOff, Square, Globe, Database, Plus, ChevronDown, Loader2 } from 'lucide-react';
+import { Video, LogOut, MessageSquare, Send, Mic, MicOff, Square, Globe, Database, Plus, ChevronDown, Loader2, MapPin } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import { ChatMessage, Session } from '@shared/types';
 import { meetingService } from '../services/meetingService';
-import { llmAPI, sessionsAPI } from '../services/api';
+import { llmAPI, sessionsAPI, emailAPI } from '../services/api';
 import { logger } from '../utils/logger';
+import { getCurrentLocation } from '../utils/geolocationService';
 
 interface ActiveSessionPageProps {
   onNavigate: (page: string) => void;
@@ -21,23 +22,53 @@ const ActiveSessionPage: React.FC<ActiveSessionPageProps> = ({ onNavigate }) => 
   const [useRAGSearch, setUseRAGSearch] = useState(false);
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
+  const [locationStatus, setLocationStatus] = useState<'acquiring' | 'acquired' | 'failed' | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const searchDropdownRef = useRef<HTMLDivElement>(null);
-  const { chatMessages, setChatMessages, selectedSession, user } = useAppContext();
+  const { chatMessages, setChatMessages, selectedSession, user, setSelectedSession } = useAppContext();
 
   useEffect(() => {
     if (selectedSession) {
       logger.activeSession('Active session page loaded', { sessionId: selectedSession.id });
       meetingService.initializeBroadcastChannel(selectedSession.id);
+      
+      // Capture geolocation if not already set (non-blocking)
+      if (!selectedSession.location && navigator.geolocation) {
+        setLocationStatus('acquiring');
+        getCurrentLocation().then((location) => {
+          if (location && selectedSession) {
+            // Update session with location
+            sessionsAPI.update(selectedSession.id, { location }).then((updatedSession) => {
+              setSelectedSession(updatedSession);
+              setLocationStatus('acquired');
+              logger.activeSession('Location captured and saved', {
+                sessionId: selectedSession.id,
+                lat: location.lat,
+                lng: location.lng,
+              });
+            }).catch((error) => {
+              console.error('Failed to update session location:', error);
+              setLocationStatus('failed');
+            });
+          } else {
+            setLocationStatus('failed');
+          }
+        }).catch((error) => {
+          console.error('Geolocation capture failed:', error);
+          setLocationStatus('failed');
+        });
+      } else if (selectedSession.location) {
+        setLocationStatus('acquired');
+      }
     }
 
     return () => {
       logger.activeSession('Cleaning up active session');
       meetingService.cleanup();
     };
-  }, [selectedSession]);
+  }, [selectedSession, setSelectedSession]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -238,6 +269,72 @@ const ActiveSessionPage: React.FC<ActiveSessionPageProps> = ({ onNavigate }) => 
     }
   };
 
+  // Helper function to send meeting recap email
+  const sendMeetingRecapEmail = (session: Session, summaryData: any) => {
+    // Validate user email exists
+    if (!user?.email) {
+      logger.activeSession('Skipping email send - no user email', { sessionId: session.id });
+      return;
+    }
+
+    // Extract key details from summaryData
+    const keyDetails: string[] = [];
+    if (summaryData) {
+      if (summaryData.key_takeaways) {
+        const takeaways = typeof summaryData.key_takeaways === 'string' 
+          ? summaryData.key_takeaways.split('\n').filter((t: string) => t.trim())
+          : [];
+        keyDetails.push(...takeaways);
+      }
+      if (summaryData.action_items) {
+        const actions = typeof summaryData.action_items === 'string'
+          ? summaryData.action_items.split('\n').filter((a: string) => a.trim())
+          : [];
+        keyDetails.push(...actions);
+      }
+      if (summaryData.what_was_done) {
+        keyDetails.push(summaryData.what_was_done);
+      }
+    }
+
+    // Build summary text
+    const summaryText = summaryData
+      ? `${summaryData.purpose || ''}\n\n${summaryData.what_happened || ''}\n\n${summaryData.what_was_done || ''}`.trim()
+      : session.description || 'Meeting summary not available.';
+
+    // Build transcript text
+    const transcriptText = session.transcript && session.transcript.length > 0
+      ? session.transcript.map((msg) => `${msg.sender}: ${msg.message}`).join('\n')
+      : 'No transcript available.';
+
+    // Send email asynchronously (fire-and-forget)
+    emailAPI.sendMeetingRecap({
+      to: user.email,
+      meetingTitle: session.name,
+      date: session.date,
+      summary: summaryText,
+      keyDetails: keyDetails.length > 0 ? keyDetails : ['No specific details available.'],
+      transcript: transcriptText,
+    }).then((result) => {
+      if (result.success) {
+        logger.activeSession('Meeting recap email sent successfully', {
+          sessionId: session.id,
+          to: user.email,
+        });
+      } else {
+        logger.activeSession('Failed to send meeting recap email', {
+          sessionId: session.id,
+          error: result.error,
+        });
+      }
+    }).catch((error) => {
+      logger.activeSession('Exception sending meeting recap email', {
+        sessionId: session.id,
+        error: error.message,
+      });
+    });
+  };
+
   const handleExitSession = async () => {
     if (isExiting) return; // Prevent double-click
     
@@ -304,13 +401,23 @@ const ActiveSessionPage: React.FC<ActiveSessionPageProps> = ({ onNavigate }) => 
                             logger.aiAnswerError('Failed to update session description', error as Error, { sessionId: updatedSession.id });
                           });
                       }
+
+                      // Send meeting recap email (fire-and-forget)
+                      sendMeetingRecapEmail(updatedSession, jsonData);
                     } catch (parseError) {
                       logger.aiAnswerError('Failed to parse background summary JSON', parseError as Error, { sessionId: updatedSession.id });
+                      // Still try to send email even if summary parsing fails
+                      sendMeetingRecapEmail(updatedSession, null);
                     }
                   })
                   .catch((error) => {
                     logger.aiAnswerError('Failed to generate background summary', error as Error, { sessionId: updatedSession.id });
+                    // Still try to send email even if summary generation fails
+                    sendMeetingRecapEmail(updatedSession, null);
                   });
+              } else if (updatedSession.summaryData) {
+                // Summary already exists, send email with existing summary
+                sendMeetingRecapEmail(updatedSession, updatedSession.summaryData);
               }
             })
             .catch((error) => {
@@ -345,8 +452,28 @@ const ActiveSessionPage: React.FC<ActiveSessionPageProps> = ({ onNavigate }) => 
           <div className="flex items-center gap-2 md:gap-3 min-w-0">
             <Video className="w-4 md:w-5 h-4 md:h-5 text-white flex-shrink-0" />
             <h2 className="text-white font-semibold text-sm md:text-base truncate">
-              Meeting Session
+              {selectedSession?.name || 'Meeting Session'}
             </h2>
+            {/* Geolocation Status Icon */}
+            {locationStatus && (
+              <div className="flex items-center gap-1" title={
+                locationStatus === 'acquiring' 
+                  ? 'Acquiring location...' 
+                  : locationStatus === 'acquired' && selectedSession?.location
+                  ? `Location: ${selectedSession.location.address || `${selectedSession.location.lat.toFixed(4)}, ${selectedSession.location.lng.toFixed(4)}`}`
+                  : 'Location unavailable'
+              }>
+                <MapPin 
+                  className={`w-4 h-4 flex-shrink-0 ${
+                    locationStatus === 'acquired' 
+                      ? 'text-green-500' 
+                      : locationStatus === 'acquiring'
+                      ? 'text-yellow-500 animate-pulse'
+                      : 'text-gray-500'
+                  }`} 
+                />
+              </div>
+            )}
           </div>
           <button
             onClick={handleExitSession}

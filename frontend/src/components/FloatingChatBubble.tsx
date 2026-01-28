@@ -19,6 +19,7 @@ const FloatingChatBubble: React.FC = () => {
   const [useRAGSearch, setUseRAGSearch] = useState(false);
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
   const searchDropdownRef = useRef<HTMLDivElement>(null);
   const { user } = useAppContext();
@@ -127,9 +128,13 @@ const FloatingChatBubble: React.FC = () => {
         shouldUseWebSearch,
         shouldUseRAGSearch,
         indexedDBChunks.length > 0 ? indexedDBChunks : undefined,
-        isFirstMessage ? user.name : undefined // Only pass username for first message greeting
+        isFirstMessage ? user.name : undefined, // Only pass username for first message greeting
+        isFirstMessage // Pass isFirstMessage flag
       );
 
+      // Add a small delay to show loading dots before displaying response
+      await new Promise(resolve => setTimeout(resolve, 300)); // 300ms delay
+      
       const aiResponse: ChatMessage = {
         text: result.answer,
         isUser: false,
@@ -178,7 +183,15 @@ const FloatingChatBubble: React.FC = () => {
               </div>
             </div>
             <button
-              onClick={() => setIsOpen(false)}
+              onClick={() => {
+                // If there are messages, show confirmation dialog
+                if (chatMessages.length > 0) {
+                  setShowCloseConfirm(true);
+                } else {
+                  // No messages, just close
+                  setIsOpen(false);
+                }
+              }}
               className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
             >
               <X className="w-4 h-4 text-white" />
@@ -307,6 +320,44 @@ const FloatingChatBubble: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Close Confirmation Dialog */}
+      {showCloseConfirm && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/50 z-[60]"
+            onClick={() => setShowCloseConfirm(false)}
+          />
+          <div className="fixed bottom-6 right-6 w-96 max-w-[calc(100vw-3rem)] bg-ivory rounded-2xl shadow-2xl border-2 border-red-600 z-[70] p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Keep Chat?</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Do you want to keep this conversation? If you choose "No", the conversation will be cleared and you'll start fresh next time.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => {
+                  setShowCloseConfirm(false);
+                  setIsOpen(false);
+                  // Keep messages - don't clear them
+                }}
+                className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors text-sm font-medium"
+              >
+                Yes, Keep
+              </button>
+              <button
+                onClick={() => {
+                  setShowCloseConfirm(false);
+                  setChatMessages([]); // Clear conversation
+                  setIsOpen(false);
+                }}
+                className="px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-900 transition-colors text-sm font-medium border-2 border-red-600"
+              >
+                No, Delete
+              </button>
+            </div>
+          </div>
+        </>
       )}
     </>
   );

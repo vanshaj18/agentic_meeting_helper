@@ -88,7 +88,7 @@ router.post('/sessions/:sessionId/ask', async (req, res) => {
   });
   
   try {
-    const { question, agentId, useWebSearch, useRAGSearch, indexedDBChunks, username } = req.body;
+    const { question, agentId, useWebSearch, useRAGSearch, indexedDBChunks, username, isFirstMessage } = req.body;
 
     if (!question) {
       logger.llmError('API: Question missing', undefined, { sessionId });
@@ -146,7 +146,8 @@ router.post('/sessions/:sessionId/ask', async (req, res) => {
       useWebSearch === true,
       useRAGSearch === true,
       indexedDBChunks, // Pass IndexedDB chunks from frontend
-      username // Pass username for personalization
+      username, // Pass username for personalization
+      isFirstMessage === true // Pass isFirstMessage flag
     );
 
     if (result.error) {
@@ -252,7 +253,7 @@ router.post('/chat', async (req, res) => {
   });
   
   try {
-    const { question, agentId, useWebSearch, useRAGSearch, indexedDBChunks, username } = req.body;
+    const { question, agentId, useWebSearch, useRAGSearch, indexedDBChunks, username, isFirstMessage } = req.body;
 
     if (!question) {
       logger.llmError('API: Question missing', undefined);
@@ -295,7 +296,8 @@ router.post('/chat', async (req, res) => {
       useWebSearch === true,
       useRAGSearch === true,
       indexedDBChunks, // Pass IndexedDB chunks from frontend
-      username // Pass username for personalization
+      username, // Pass username for personalization
+      isFirstMessage === true // Pass isFirstMessage flag
     );
 
     if (result.error) {

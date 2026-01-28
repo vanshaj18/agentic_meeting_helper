@@ -4,6 +4,12 @@ export interface User {
   email: string;
 }
 
+export interface GeoLocation {
+  lat: number;
+  lng: number;
+  address?: string;
+}
+
 export interface Session {
   id: number;
   name: string;
@@ -14,6 +20,7 @@ export interface Session {
   documentIds?: number[];
   cueCardIds?: number[];
   summary?: string;
+  location?: GeoLocation;
   summaryData?: {
     purpose?: string;
     what_happened?: string;

@@ -38,6 +38,7 @@ ai_remote_work/
 - **Knowledge Base**: Upload and manage documents and cue cards with PDF viewer
 - **Agent Store**: Pre-defined and custom AI agents for meeting assistance
 - **Templates**: Create reusable meeting templates with agents, documents, and cue cards
+- **Email Integration**: Automated meeting recap emails with HTML formatting and transcript attachments
 - **Active Session**: 
   - Screen/tab sharing integration with Google Meet, MS Teams, Zoom
   - Real-time Speech-to-Text using Web Speech API
@@ -197,6 +198,7 @@ All TypeScript interfaces are defined in `shared/types/index.ts` and imported by
 - Neo4j Driver (for graph database - AuraDB)
 - Cohere SDK (for reranking)
 - LangChain (for text processing)
+- Nodemailer (for email functionality)
 
 ## Environment Setup
 
@@ -244,6 +246,13 @@ HF_TOKEN=your_huggingface_token_here
 
 # Optional: Groq API Key (for high-speed race reranker - Racer C: Listwise Llama)
 GROQ_API_KEY=your_groq_api_key_here
+
+# Optional: SMTP Email Configuration (for meeting recap emails)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+SMTP_FROM=your-email@gmail.com
 ```
 
 ### Getting API Keys
@@ -304,7 +313,38 @@ GROQ_API_KEY=your_groq_api_key_here
    - **RAG Generation**: Uses `llama-3.3-70b-versatile` model for high-quality answer generation with citations
    - **Note**: At least one reranker (Jina, HF, or Groq) should be configured for race reranker to work
 
+9. **SMTP Email Configuration** (optional, for meeting recap emails):
+   - **Gmail**: 
+     - `SMTP_HOST=smtp.gmail.com`
+     - `SMTP_PORT=587`
+     - `SMTP_USER=your-email@gmail.com`
+     - `SMTP_PASS=your-app-password` (generate an App Password in Google Account settings)
+     - `SMTP_FROM=your-email@gmail.com`
+   - **Outlook/Office365**:
+     - `SMTP_HOST=smtp.office365.com`
+     - `SMTP_PORT=587`
+     - `SMTP_USER=your-email@outlook.com`
+     - `SMTP_PASS=your-password`
+     - `SMTP_FROM=your-email@outlook.com`
+   - **SendGrid**:
+     - `SMTP_HOST=smtp.sendgrid.net`
+     - `SMTP_PORT=587`
+     - `SMTP_USER=apikey`
+     - `SMTP_PASS=your-sendgrid-api-key`
+     - `SMTP_FROM=noreply@yourdomain.com`
+   - **Note**: Leave `SMTP_FROM` empty to use `SMTP_USER` as the sender address
+
 ## Feature Details
+
+### Email Integration (SMTP)
+- **Meeting Recap Emails**: Automated email sending with HTML formatting
+- **Email Features**:
+  - Professional HTML email templates with executive summary
+  - Key discussion points formatting
+  - Transcript attachment (text file)
+  - Support for Gmail, Outlook/Office365, SendGrid, and other SMTP providers
+- **Configuration**: Configure SMTP settings in `backend/.env`
+- **Email Content**: Includes meeting title, date, summary, key details, and full transcript
 
 ### LLM Integration (OpenAI API)
 - **Agent-based processing**: Modular LLM agents for different tasks
@@ -375,74 +415,41 @@ See [RAG Documentation](./backend/src/lib/rag/README.md) and [Retrieval Document
 
 See [RAG Documentation](./backend/src/lib/rag/README.md) and [Retrieval Documentation](./backend/src/lib/rag/retrieve-README.md) for details.
 
+### Email Endpoints
+- `POST /api/email/meeting-recap` - Send meeting recap email
+  - Body: `{ to, meetingTitle, date, summary, keyDetails[], transcript }`
+  - Returns: `{ success: boolean, message?: string, error?: string }`
+
 ## Usage Examples
+
+### Sending Meeting Recap Email
+```typescript
+import { emailAPI } from './frontend/src/services/api';
+
+const result = await emailAPI.sendMeetingRecap({
+  to: 'recipient@example.com',
+  meetingTitle: 'Q4 Planning Meeting',
+  date: 'January 28, 2026',
+  summary: 'Discussed Q4 goals and roadmap...',
+  keyDetails: [
+    'Launched new product features',
+    'Increased team size to 15 members',
+    'Achieved 95% customer satisfaction'
+  ],
+  transcript: 'Full meeting transcript text...'
+});
+
+if (result.success) {
+  console.log('Email sent successfully');
+} else {
+  console.error('Failed to send email:', result.error);
+}
+```
 
 ### Web Search in Chat
 1. Type your question in the chat input
 2. Click the globe icon to enable web search (icon turns blue when enabled)
 3. Click send to submit with web search context
-
-### RAG Document Ingestion
-```typescript
-import { ragIngestionService } from './backend/src/lib/rag/ingest';
-
-const result = await ragIngestionService.ingestDocument(
-  'Your document text...',
-  'user-123'
-);
-
-if (result.success) {
-  console.log(`Ingested ${result.chunksAdded} chunks`);
-  console.log(`Summary: ${result.summary}`);
-  console.log(`Label: ${result.label}`);
-}
-```
-
-### RAG Hybrid Retrieval
-```typescript
-import { hybridRetrieverService } from './backend/src/lib/rag/retrieve';
-
-const result = await hybridRetrieverService.retrieve(
-  'What is the main topic?',
-  'user-123',
-  5 // top-K results
-);
-
-console.log(`Found ${result.chunks.length} chunks`);
-console.log(`Vector: ${result.vectorCount}, Graph: ${result.graphCount}`);
-
-// Check database statistics
-const stats = await hybridRetrieverService.checkDatabaseStats();
-console.log(`Nodes: ${stats.nodeCount}, Relationships: ${stats.relationshipCount}`);
-```
-
-### RAG Generation (Complete Pipeline)
-```typescript
-import { hybridRetrieverService } from './backend/src/lib/rag/retrieve';
-import { generateAnswer } from './backend/src/lib/rag/generate';
-
-// Step 1: Retrieve relevant documents
-const retrievalResult = await hybridRetrieverService.retrieve(
-  'What were the key financial results?',
-  'user-123',
-  5
-);
-
-// Step 2: Generate answer with citations
-const generationResult = await generateAnswer(
-  'What were the key financial results?',
-  retrievalResult.chunks.map(chunk => ({
-    id: chunk.id,
-    content: chunk.text,
-    original_score: chunk.score,
-    metadata: chunk.metadata,
-  })),
-  5 // top-K documents to use
-);
-
-console.log(`Answer: ${generationResult.answer}`);
-console.log(`Citations: ${generationResult.citations.join(', ')}`);
-```
 
 ## Development Notes
 

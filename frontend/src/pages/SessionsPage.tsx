@@ -56,6 +56,21 @@ const SessionsPage: React.FC<SessionsPageProps> = ({ onNavigate, initialOptions 
       setShowCreateModal(false);
       logger.session('Session created successfully', { sessionId: newSession.id, name: newSession.name });
       
+      // Capture geolocation in background (non-blocking)
+      if (navigator.geolocation) {
+        const { getCurrentLocation } = await import('../utils/geolocationService');
+        getCurrentLocation().then((location) => {
+          if (location && newSession) {
+            // Update session with location
+            sessionsAPI.update(newSession.id, { location }).catch((error) => {
+              console.error('Failed to update session location:', error);
+            });
+          }
+        }).catch((error) => {
+          console.error('Geolocation capture failed:', error);
+        });
+      }
+      
       // Smooth transition to active session page
       setTimeout(() => {
         onNavigate('active-session');

@@ -181,13 +181,13 @@ router.post('/ingest/:documentId', upload.single('file'), async (req, res) => {
 });
 
 /**
- * Generate page summary using Groq (Server-side)
+ * Generate page summary with citations using Groq (Server-side)
  * POST /rag/summarize-page
- * Body: { text: string, pageNumber: number }
- * Returns: { summary: string | null }
+ * Body: { text: string, pageNumber: number, isFirstPage?: boolean }
+ * Returns: { summary: string | null, topic_tag: string | null, apa_citation: string | null }
  */
 router.post('/summarize-page', async (req, res) => {
-  const { text, pageNumber } = req.body;
+  const { text, pageNumber, isFirstPage } = req.body;
 
   if (!text || typeof text !== 'string') {
     return res.status(400).json({ error: 'Text is required' });
@@ -195,7 +195,11 @@ router.post('/summarize-page', async (req, res) => {
 
   // Skip summarization for short pages (< 500 chars)
   if (text.length < 500) {
-    return res.json({ summary: null });
+    return res.json({ 
+      summary: undefined, 
+      topic_tag: undefined, 
+      apa_citation: undefined 
+    });
   }
 
   try {
@@ -204,7 +208,9 @@ router.post('/summarize-page', async (req, res) => {
       logger.ragError('Groq API key not configured', undefined, { pageNumber });
       return res.status(503).json({ 
         error: 'Groq API key not configured',
-        summary: null 
+        summary: undefined,
+        topic_tag: undefined,
+        apa_citation: undefined
       });
     }
 
@@ -212,10 +218,26 @@ router.post('/summarize-page', async (req, res) => {
       apiKey: groqApiKey,
     });
 
-    const prompt = `Summarize this page in 1 sentence. Capture key dates, entities, and decisions.
+    // Build prompt based on whether it's the first page
+    let prompt = `Analyze this text.
 
 Page ${pageNumber || 'Unknown'}:
-${text.substring(0, 4000)}`; // Limit to avoid token limits
+${text.substring(0, 4000)}
+
+Please provide:
+1. A 1-sentence summary capturing key dates, entities, and decisions.
+2. A short, specific topic tag (max 10 words) describing the key insight (e.g., 'Q3 Revenue Figures', 'Safety Protocols', 'Introduction').`;
+
+    if (isFirstPage) {
+      prompt += `\n3. Generate a hypothetical APA-style citation for this document based on the title/content found. Format: Author. (Year). *Title*. Publisher.`;
+    }
+
+    prompt += `\n\nRespond with a valid JSON object in this exact format:
+{
+  "summary": "your 1-sentence summary here",
+  "topic_tag": "your topic tag here",
+  ${isFirstPage ? '"apa_citation": "your APA citation here"' : ''}
+}`;
 
     const completion = await groq.chat.completions.create({
       messages: [
@@ -226,23 +248,50 @@ ${text.substring(0, 4000)}`; // Limit to avoid token limits
       ],
       model: 'llama-3.3-70b-versatile',
       temperature: 0.3,
-      max_tokens: 150,
+      max_tokens: 300,
+      response_format: { type: 'json_object' },
     });
 
-    const summary = completion.choices[0]?.message?.content?.trim() || null;
+    const content = completion.choices[0]?.message?.content?.trim() || '{}';
+    let parsed: { summary?: string; topic_tag?: string; apa_citation?: string } = {};
+    
+    try {
+      parsed = JSON.parse(content);
+    } catch (parseError) {
+      logger.ragError('Failed to parse summary JSON', parseError as Error, {
+        pageNumber,
+        content: content.substring(0, 200),
+      });
+      // Fallback: try to extract summary from raw content
+      parsed = {
+        summary: content.substring(0, 200),
+      };
+    }
+
+    const result = {
+      summary: parsed.summary?.trim() || undefined,
+      topic_tag: parsed.topic_tag?.trim() || undefined,
+      apa_citation: (isFirstPage && parsed.apa_citation?.trim()) || undefined,
+    };
     
     logger.rag('Page summary generated', { 
       pageNumber, 
-      summaryLength: summary?.length || 0 
+      summaryLength: result.summary?.length || 0,
+      hasTopicTag: !!result.topic_tag,
+      hasCitation: !!result.apa_citation,
     });
 
-    res.json({ summary });
+    res.json(result);
   } catch (error: any) {
     logger.ragError('Failed to generate page summary', error, {
       pageNumber,
       errorMessage: error.message,
     });
-    res.json({ summary: null });
+    res.json({ 
+      summary: undefined, 
+      topic_tag: undefined, 
+      apa_citation: undefined 
+    });
   }
 });
 
